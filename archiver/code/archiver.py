@@ -1004,13 +1004,6 @@ class KPEDArchiver(Archiver):
         ''' initialize super class '''
         super(KPEDArchiver, self).__init__(config_file=config_file)
 
-        ''' init db if necessary '''
-        self.init_db()
-
-        ''' connect to db: '''
-        # will exit if this fails
-        self.connect_to_db()
-
         ''' start results harvester in separate thread '''
         self.running = True
         self.h = threading.Thread(target=self.harvester)
@@ -1020,6 +1013,13 @@ class KPEDArchiver(Archiver):
         self.start_time = utc_now()
         self.t = threading.Thread(target=self.telemetry)
         self.t.start()
+
+        ''' init db if necessary '''
+        self.init_db()
+
+        ''' connect to db: '''
+        # will exit if this fails
+        self.connect_to_db()
 
     def init_db(self):
         """
@@ -1511,7 +1511,6 @@ class KPEDArchiver(Archiver):
                                     raise RuntimeError(s['message'])
                             except Exception as _e:
                                 print('Error in calibration():', _e)
-                                # TODO: use "default" calib instead
                                 # traceback.print_exc()
                                 self.logger.error(_e)
                                 self.logger.error('Failed to process calibration data for {:s}.'.format(date))
@@ -1846,6 +1845,8 @@ class KPEDArchiver(Archiver):
             """
 
             self.logger.debug('Making {:s}'.format(out_fn))
+            print('Making {:s}'.format(out_fn))
+            print(img[0].shape)
             # two passes:
             # 1/ generate average and RMS for each pixel
             # 2/ sigma-clipped average and RMS for each pixel
@@ -1963,34 +1964,23 @@ class KPEDArchiver(Archiver):
                     if camera_mode != '0':
                         # mode 0 is handled below
 
-                        unzipped = os.path.join(self.config['path']['path_tmp'], f)
+                        unzipped = os.path.join(path_date, f)
 
                         out_fn = os.path.join(_path_out, 'dark_{:s}.fits'.format(camera_mode))
                         with fits.open(unzipped) as img:
-                            sigma_clip_combine(img, out_fn, dark_bias_sub=True)
-
-                        # clean up after yoself!
-                        try:
-                            os.remove(unzipped)
-                        except Exception as _e:
-                            self.logger.error(_e)
+                            sigma_clip_combine(img[1:], out_fn, dark_bias_sub=True)
 
                 # generate the flats' dark
                 # those files with mode '0' are the relevant ones:
                 f = ['{:s}.fits.fz'.format(d) for d in dark if d.split('_')[1] == '0']
-                unzipped = [os.path.join(self.config['path']['path_tmp'], _f) for _f in f]
+                unzipped = [os.path.join(path_date, _f) for _f in f]
 
                 img = []
                 for uz in unzipped:
-                    img.append(fits.open(uz)[0])
-                    # clean up after yoself!
-                    try:
-                        os.remove(uz)
-                    except Exception as _e:
-                        self.logger.error(_e)
+                    img.append(fits.open(uz)[1])
 
                 flat_dark_fn = os.path.join(_path_out, 'dark_0.fits')
-                sigma_clip_combine(img, flat_dark_fn, dark_bias_sub=False)
+                sigma_clip_combine(img[1:], flat_dark_fn, dark_bias_sub=False)
 
                 with fits.open(flat_dark_fn) as fdn:
                     flat_dark = np.array(fdn[0].data, dtype=np.float32)
@@ -2000,19 +1990,14 @@ class KPEDArchiver(Archiver):
                     print("Making {:s} flat".format(filt))
                     flats = []
 
-                    f = ['{:s}.fits.fz'.format(_f) for _f in flat if _f.split('_')[2] == filt]
-                    unzipped = [os.path.join(self.config['path']['path_tmp'], _f) for _f in f]
+                    f = ['{:s}.fits.fz'.format(_f) for _f in flat if _f.split('_')[1] == filt]
+                    unzipped = [os.path.join(path_date, _f) for _f in f]
 
                     for uz in unzipped:
 
-                        flt = fits.open(uz)[0]
+                        flt = fits.open(uz)[1]
                         flt.data = np.array(flt.data, dtype=np.float32)
                         flt.data -= flat_dark
-                        # clean up after yoself!
-                        try:
-                            os.remove(uz)
-                        except Exception as _e:
-                            self.logger.error(_e)
 
                         flats.append(flt)
 
@@ -2046,8 +2031,28 @@ class KPEDArchiver(Archiver):
                         }
 
             else:
-                return {'status': 'error',
-                        'message': 'No enough calibration files for {:s}'.format(_date)}
+                # copy "default" calib data over:
+                _path_in = os.path.join(self.config['path']['path_archive'], 'calib')
+
+                # copy master calib files over:
+                for _f in os.listdir(_path_in):
+                    shutil.copy2(os.path.join(_path_in, _f), _path_out)
+
+                return {'status': 'ok',
+                        'message': 'copied default master calibration files',
+                        'db_record_update': ({'_id': _date},
+                                             {
+                                                 '$set': {
+                                                     'calib.done': True,
+                                                     'calib.last_modified': time_tag,
+                                                     'calib.comment': 'Using default calib data'
+                                                 }
+                                             }
+                                             )
+                        }
+
+                # return {'status': 'error',
+                #         'message': 'No enough calibration files for {:s}'.format(_date)}
         else:
             return {'status': 'ok',
                     'message': None}
@@ -3724,10 +3729,10 @@ class KPEDRegistrationPipeline(KPEDPipeline):
                 shifts_db.append([int(l[0])] + list(map(float, l[1:])))
             self.db_entry['pipelined'][self.name]['shifts'] = shifts_db
 
-            for _file in raws:
-                if _v:
-                    print('removing', _file)
-                os.remove(os.path.join(_file))
+            # for _file in raws:
+            #     if _v:
+            #         print('removing', _file)
+            #     os.remove(os.path.join(_file))
 
         elif part == 'faint_star_pipeline:preview':
             # generate previews
@@ -3855,4 +3860,4 @@ if __name__ == '__main__':
     arch = KPEDArchiver(args.config_file)
 
     # start the archiver main house-keeping cycle:
-    # arch.cycle()
+    arch.cycle()

@@ -16,8 +16,16 @@ docker volume create archiver-kped-mongo-volume
 Launch the MongoDB container. Feel free to change u/p for the admin
 ```bash
 # docker build -t archiver-kped-mongo -f database/Dockerfile .
-docker run -d --restart always --name archiver-kped-mongo -p 27018:2017 -v archiver-kped-mongo-volume:/db \
+docker run -d --restart always --name archiver-kped-mongo -p 27018:27017 -v archiver-kped-mongo-volume:/data/db \
        -e MONGO_INITDB_ROOT_USERNAME=mongoadmin -e MONGO_INITDB_ROOT_PASSWORD=mongoadminsecret \
        mongo:latest
 ```
 
+Bulid and launch the archiver container. Bind-mount the raw/processed data directories on the host machine:
+```bash
+cd archiver
+docker build -t archiver-kped -f Dockerfile .
+docker run -v /path/to/raw/data:/data \
+           -v /path/to/archive:/archive \
+           --name archiver-kped -d --link archiver-kped-mongo:mongo --restart always latest
+```
