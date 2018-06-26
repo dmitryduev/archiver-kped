@@ -8,8 +8,10 @@ RUN apt-get update && apt-get -y install apt-file && apt-file update && apt-get 
     apt-get install -y git && apt-get install -y fftw3 && apt-get install -y libfftw3-dev && \
     apt-get install -y sextractor
 
-# place to keep our app:
+# place to keep our app, raw data, and processed data:
 RUN mkdir -p /app
+RUN mkdir -p /data
+RUN mkdir -p /archive
 
 # install python libs
 COPY code/requirements.txt /app/

@@ -57,7 +57,7 @@ from matplotlib.offsetbox import AnchoredOffsetbox, AuxTransformBox, VPacker, Te
 from penquins import Kowalski
 
 # load secrets:
-with open('secret.json') as sjson:
+with open('secrets.json') as sjson:
     secrets = json.load(sjson)
 
 # connect to Kowalski
@@ -1004,6 +1004,9 @@ class KPEDArchiver(Archiver):
         ''' initialize super class '''
         super(KPEDArchiver, self).__init__(config_file=config_file)
 
+        ''' init db if necessary '''
+        self.init_db()
+
         ''' connect to db: '''
         # will exit if this fails
         self.connect_to_db()
@@ -1017,6 +1020,29 @@ class KPEDArchiver(Archiver):
         self.start_time = utc_now()
         self.t = threading.Thread(target=self.telemetry)
         self.t.start()
+
+    def init_db(self):
+        """
+            Initialize db if new Mongo instance
+        :return:
+        """
+        _client = pymongo.MongoClient(username=self.config['database']['admin'],
+                                      password=self.config['database']['admin_pwd'],
+                                      host=self.config['database']['host'],
+                                      port=self.config['database']['port'])
+        # _id: db_name.user_name
+        user_ids = [_u['_id'] for _u in _client.admin.system.users.find({}, {'_id': 1})]
+
+        db_name = self.config['database']['db']
+        username = self.config['database']['user']
+
+        # print(f'{db_name}.{username}')
+        # print(user_ids)
+
+        if f'{db_name}.{username}' not in user_ids:
+            _client[db_name].command('createUser', self.config['database']['user'],
+                                     pwd=self.config['database']['pwd'], roles=['readWrite'])
+            print('Successfully initialized db')
 
     def harvester(self):
         """
@@ -1035,11 +1061,6 @@ class KPEDArchiver(Archiver):
                                                                                            result['_id'],
                                                                                            result['status']))
                     # remove from self.task_hashes
-                    # if (result['status'] == 'ok') and ('hash' in result):
-                    #     self.task_hashes.remove(result['hash'])
-                    # # error? remove from self.task_hashes. max_retries won't allow it to come back too many times!
-                    # elif (result['status'] == 'error') and ('hash' in result):
-                    #     self.task_hashes.remove(result['hash'])
                     if 'hash' in result:
                         self.task_hashes.remove(result['hash'])
 
@@ -1071,14 +1092,13 @@ class KPEDArchiver(Archiver):
                 _cpu_usage = psutil.cpu_percent(interval=None)
                 _mem_usage = psutil.virtual_memory().percent
                 _root = psutil.disk_usage('/').percent
-                _data_1 = psutil.disk_usage('/Data1').percent
-                _data_2 = psutil.disk_usage('/Data2').percent
-                _data_3 = psutil.disk_usage('/Data3').percent
-                _t = '{:s} {:s} {:s} {:d} {:.1f} {:.1f} {:.1f} {:.1f} {:.1f} {:.1f}\n'.format(_utc_now, _r,
-                                                                                              _start_time, _n_tasks,
-                                                                                              _cpu_usage, _mem_usage,
-                                                                                              _root, _data_1,
-                                                                                              _data_2, _data_3)
+                _data_1 = psutil.disk_usage('/data').percent
+                _data_2 = psutil.disk_usage('/archive').percent
+                _t = '{:s} {:s} {:s} {:d} {:.1f} {:.1f} {:.1f} {:.1f} {:.1f}\n'.format(_utc_now, _r,
+                                                                                       _start_time, _n_tasks,
+                                                                                       _cpu_usage, _mem_usage,
+                                                                                       _root, _data_1,
+                                                                                       _data_2)
                 with open(os.path.join(self.config['path']['path_logs'], 'archiver_status'), 'w') as _f:
                     _f.write(_t)
             except Exception as _e:
@@ -1098,8 +1118,12 @@ class KPEDArchiver(Archiver):
             _n_tasks = len(self.task_hashes)
             _cpu_usage = psutil.cpu_percent(interval=None)
             _mem_usage = psutil.virtual_memory().percent
+            _root = psutil.disk_usage('/').percent
+            _data_1 = psutil.disk_usage('/data').percent
+            _data_2 = psutil.disk_usage('/archive').percent
             _t = '{:s} {:s} {:s} {:d} {:.1f} {:.1f}\n'.format(utc_now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3],
-                                                              _r, _start_time, _n_tasks, _cpu_usage, _mem_usage)
+                                                              _r, _start_time, _n_tasks, _cpu_usage, _mem_usage,
+                                                              _root, _data_1, _data_2)
             with open(os.path.join(self.config['path']['path_logs'], 'archiver_status'), 'w') as _f:
                 _f.write(_t)
         except Exception as _e:
@@ -3831,4 +3855,4 @@ if __name__ == '__main__':
     arch = KPEDArchiver(args.config_file)
 
     # start the archiver main house-keeping cycle:
-    arch.cycle()
+    # arch.cycle()

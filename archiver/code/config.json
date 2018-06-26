@@ -30,6 +30,8 @@
   "database": {
     "host": "archiver-kped-mongo",
     "port": 27017,
+    "admin": "mongoadmin",
+    "admin_pwd": "mongoadminsecret",
     "db": "kped",
     "user": "kped",
     "pwd": "kpedkicksass",

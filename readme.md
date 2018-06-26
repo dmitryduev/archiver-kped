@@ -13,7 +13,7 @@ Create a persistent Docker volume for MongoDB:
 docker volume create archiver-kped-mongo-volume
 ```
 
-Launch the MongoDB container:
+Launch the MongoDB container. Feel free to change u/p for the admin
 ```bash
 # docker build -t archiver-kped-mongo -f database/Dockerfile .
 docker run -d --restart always --name archiver-kped-mongo -p 27018:2017 -v archiver-kped-mongo-volume:/db \
