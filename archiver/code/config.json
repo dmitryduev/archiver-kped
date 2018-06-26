@@ -28,7 +28,7 @@
   },
 
   "database": {
-    "host": "127.0.0.1",
+    "host": "archiver-kped-mongo",
     "port": 27017,
     "db": "kped",
     "user": "kped",
@@ -127,7 +127,6 @@
     },
 
     "photometry": {
-
       "stack_intervals": [1, 2, 8],
       "sextractor_settings": [],
       "verbose": true,
@@ -157,6 +156,16 @@
         "fit_model": "Gaussian2D or Moffat2D",
         "win": "box size",
         "self": "pipeline to process nightly seeing data"
+      }
+    },
+
+    "export": {
+
+      "verbose": true,
+
+      "help": {
+        "self": "Export science-ready astrometry/photometry to Kowalski",
+        "verbose": "vocalize what's happening?"
       }
     },
 

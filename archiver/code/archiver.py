@@ -1,7 +1,7 @@
 """
     Archiver
 
-    Dr. Dmitry A. Duev @ Caltech, 2016-2017
+    Dr. Dmitry A. Duev @ Caltech, 2016-2018
 """
 
 import matplotlib
@@ -28,10 +28,7 @@ import scipy.ndimage as ndimage
 from scipy.stats import sigmaclip
 from scipy.ndimage import gaussian_filter
 import image_registration
-import vip
-import photutils
 from scipy import stats
-# import operator
 import glob
 import traceback
 import sys
@@ -64,7 +61,7 @@ with open('secret.json') as sjson:
     secrets = json.load(sjson)
 
 # connect to Kowalski
-# kowalski = Kowalski(username=secrets['kowalski']['user'], password=secrets['kowalski']['password'])
+kowalski = Kowalski(username=secrets['kowalski']['user'], password=secrets['kowalski']['password'])
 
 
 # Scale bars
@@ -1090,7 +1087,7 @@ class KPEDArchiver(Archiver):
                 self.logger.error(_e)
 
             # take a nap
-            time.sleep(1.5)
+            time.sleep(1.)
 
         ''' process killed? let the world know! '''
         # construct line with telemetry
@@ -1130,41 +1127,18 @@ class KPEDArchiver(Archiver):
             assert 'task' in argdict, 'specify which task to run'
             print('running task {:s}'.format(argdict['task']))
 
-            if argdict['task'] == 'bright_star_pipeline':
-                result = job_bright_star_pipeline(_id=argdict['id'], _config=argdict['config'],
-                                                  _db_entry=argdict['db_entry'], _task_hash=_task_hash)
+            if argdict['task'] == 'registration_pipeline':
+                result = job_registration_pipeline(_id=argdict['id'], _config=argdict['config'],
+                                                   _db_entry=argdict['db_entry'], _task_hash=_task_hash)
 
-            elif argdict['task'] == 'bright_star_pipeline:strehl':
-                result = job_bright_star_pipeline_strehl(_id=argdict['id'], _config=argdict['config'],
-                                                         _db_entry=argdict['db_entry'], _task_hash=_task_hash)
+            elif argdict['task'] == 'registration_pipeline:preview':
+                result = job_registration_pipeline_preview(_id=argdict['id'], _config=argdict['config'],
+                                                           _db_entry=argdict['db_entry'], _task_hash=_task_hash)
 
-            elif argdict['task'] == 'bright_star_pipeline:preview':
-                result = job_bright_star_pipeline_preview(_id=argdict['id'], _config=argdict['config'],
-                                                          _db_entry=argdict['db_entry'], _task_hash=_task_hash)
-
-            elif argdict['task'] == 'bright_star_pipeline:pca':
-                result = job_bright_star_pipeline_pca(_id=argdict['id'], _config=argdict['config'],
-                                                      _db_entry=argdict['db_entry'], _task_hash=_task_hash)
-
-            elif argdict['task'] == 'bright_star_pipeline:pca:preview':
-                result = job_bright_star_pipeline_pca_preview(_id=argdict['id'], _config=argdict['config'],
-                                                              _db_entry=argdict['db_entry'], _task_hash=_task_hash)
-
-            elif argdict['task'] == 'faint_star_pipeline':
-                result = job_faint_star_pipeline(_id=argdict['id'], _config=argdict['config'],
-                                                 _db_entry=argdict['db_entry'], _task_hash=_task_hash)
-
-            elif argdict['task'] == 'faint_star_pipeline:preview':
-                result = job_faint_star_pipeline_preview(_id=argdict['id'], _config=argdict['config'],
-                                                         _db_entry=argdict['db_entry'], _task_hash=_task_hash)
-
-            elif argdict['task'] == 'faint_star_pipeline:strehl':
+            elif argdict['task'] == 'photometry_pipeline':
                 result = {'status': 'error', 'message': 'not implemented'}
 
-            elif argdict['task'] == 'faint_star_pipeline:pca':
-                result = {'status': 'error', 'message': 'not implemented yet'}
-
-            elif argdict['task'] == 'extended_object_pipeline':
+            elif argdict['task'] == 'astrometry_pipeline':
                 result = {'status': 'error', 'message': 'not implemented yet'}
 
             else:
@@ -1187,22 +1161,16 @@ class KPEDArchiver(Archiver):
         _config = self.config
         try:
             if self.logger is not None:
-                self.logger.debug('Connecting to the Robo-AO database at {:s}:{:d}'.
+                self.logger.debug('Connecting to the KPED database at {:s}:{:d}'.
                                   format(_config['database']['host'], _config['database']['port']))
-            if _config['server']['environment'] == 'production':
-                # in production, must set up replica set
-                _client = pymongo.MongoClient(host=_config['database']['host'], port=_config['database']['port'],
-                                              replicaset=_config['database']['replicaset'],
-                                              readPreference='primaryPreferred')
-            else:
-                # standalone from my laptop, when there's only one instance of DB
-                _client = pymongo.MongoClient(host=_config['database']['host'], port=_config['database']['port'])
+            _client = pymongo.MongoClient(host=_config['database']['host'], port=_config['database']['port'])
             # grab main database:
             _db = _client[_config['database']['db']]
+
         except Exception as _e:
             if self.logger is not None:
                 self.logger.error(_e)
-                self.logger.error('Failed to connect to the Robo-AO database at {:s}:{:d}'.
+                self.logger.error('Failed to connect to the KPED database at {:s}:{:d}'.
                                   format(_config['database']['host'], _config['database']['port']))
             # raise error
             raise ConnectionRefusedError
@@ -1210,12 +1178,12 @@ class KPEDArchiver(Archiver):
             # authenticate
             _db.authenticate(_config['database']['user'], _config['database']['pwd'])
             if self.logger is not None:
-                self.logger.debug('Successfully authenticated with the Robo-AO database at {:s}:{:d}'.
+                self.logger.debug('Successfully authenticated with the KPED database at {:s}:{:d}'.
                                   format(_config['database']['host'], _config['database']['port']))
         except Exception as _e:
             if self.logger is not None:
                 self.logger.error(_e)
-                self.logger.error('Authentication failed for the Robo-AO database at {:s}:{:d}'.
+                self.logger.error('Authentication failed for the KPED database at {:s}:{:d}'.
                                   format(_config['database']['host'], _config['database']['port']))
             raise ConnectionRefusedError
         try:
@@ -1276,7 +1244,7 @@ class KPEDArchiver(Archiver):
                 self.logger.error(_e)
 
         if self.logger is not None:
-            self.logger.debug('Successfully connected to Robo-AO database at {:s}:{:d}'.
+            self.logger.debug('Successfully connected to KPED database at {:s}:{:d}'.
                               format(_config['database']['host'], _config['database']['port']))
 
         # (re)define self.db
@@ -1357,7 +1325,7 @@ class KPEDArchiver(Archiver):
 
         # get all dates with some raw data from all input sources
         dates = dict()
-        # Robo-AO's NAS archive contains folders named as YYYYMMDD.
+        # KPED's NAS archive contains folders named as YYYYMMDD.
         # Only consider data taken starting from archiving_start_date
         archiving_start_date = datetime.datetime.strptime(self.config['misc']['archiving_start_date'], '%Y/%m/%d')
         for _p in self.config['path']['path_raw']:
@@ -1376,9 +1344,9 @@ class KPEDArchiver(Archiver):
         :param _date:
         :return:
         """
-        return sorted([os.path.basename(_p) for _p in glob.glob(os.path.join(_location, _date, '*.fits.bz2'))])
+        return sorted([os.path.basename(_p) for _p in glob.glob(os.path.join(_location, _date, '*.fits.fz'))])
 
-    @timeout(seconds_before_timeout=60)
+    @timeout(seconds_before_timeout=20)
     def insert_db_entry(self, _collection=None, _db_entry=None):
         """
             Insert a document _doc to collection _collection in DB.
@@ -1395,7 +1363,7 @@ class KPEDArchiver(Archiver):
             self.logger.error('Error inserting {:s} into {:s}'.format(_db_entry, _collection))
             self.logger.error(e)
 
-    @timeout_decorator.timeout(60, use_signals=False)
+    @timeout_decorator.timeout(20, use_signals=False)
     def update_db_entry(self, _collection=None, upd=None):
         """
             Update DB entry
@@ -1432,12 +1400,6 @@ class KPEDArchiver(Archiver):
             'seeing': {'done': False,
                        'frames': [],
                        'retries': 0,
-                       'last_modified': time_now_utc},
-            'contrast_curve': {'done': False,
-                               'retries': 0,
-                               'last_modified': time_now_utc},
-            'strehl': {'done': False,
-                       'retries': 0,
                        'last_modified': time_now_utc}
                }
 
@@ -1448,12 +1410,12 @@ class KPEDArchiver(Archiver):
         """
         try:
             # set up patterns, as these are not going to change
-            # check the endings (\Z) and skip _N.fits.bz2:
-            # science obs must start with program number (e.g. 24_ or 24.1_)
-            pattern_start = r'\d+.?\d??_'
-            # must be a bzipped fits file
-            pattern_end = r'.[0-9]{6}.fits.bz2\Z'
-            pattern_fits = r'.fits.bz2\Z'
+            # check the endings (\Z) and skip _N.fits.fz:
+            # # science obs must start with program number (e.g. 24_ or 24.1_)
+            # pattern_start = r'\d+.?\d??_'
+            # must be a fpacked fits file
+            pattern_end = r'.[0-9]{6}.fits.fz\Z'
+            pattern_fits = r'.fits.fz\Z'
 
             while True:
 
@@ -1525,6 +1487,7 @@ class KPEDArchiver(Archiver):
                                     raise RuntimeError(s['message'])
                             except Exception as _e:
                                 print('Error in calibration():', _e)
+                                # TODO: use "default" calib instead
                                 # traceback.print_exc()
                                 self.logger.error(_e)
                                 self.logger.error('Failed to process calibration data for {:s}.'.format(date))
@@ -1560,7 +1523,7 @@ class KPEDArchiver(Archiver):
                                 # skip calibration files and pointings
                                 date_obs = [re.split(pattern_fits, s)[0] for s in date_raw_data
                                             if re.search(pattern_end, s) is not None and
-                                            re.match(pattern_start, s) is not None and
+                                            # re.match(pattern_start, s) is not None and
                                             re.match('bias_', s) is None and
                                             re.match('dark_', s) is None and
                                             re.match('flat_', s) is None and
@@ -1597,11 +1560,11 @@ class KPEDArchiver(Archiver):
                                     continue
 
                                 try:
-                                    # init RoboaoObservation object
-                                    roboao_obs = RoboaoObservation(_id=obs, _aux=aux_date,
-                                                                   _program_pi=self.db['program_pi'],
-                                                                   _db_entry=select,
-                                                                   _config=self.config)
+                                    # init KPEDObservation object
+                                    kped_obs = KPEDObservation(_id=obs, _aux=aux_date,
+                                                               _program_pi=self.db['program_pi'],
+                                                               _db_entry=select,
+                                                               _config=self.config)
                                 except Exception as _e:
                                     print(_e)
                                     traceback.print_exc()
@@ -1612,7 +1575,7 @@ class KPEDArchiver(Archiver):
                                 try:
                                     # init DB entry if not in DB
                                     if select is None:
-                                        self.insert_db_entry(_collection='coll_obs', _db_entry=roboao_obs.db_entry)
+                                        self.insert_db_entry(_collection='coll_obs', _db_entry=kped_obs.db_entry)
                                         self.logger.info('Inserted {:s} into DB'.format(obs))
                                 except Exception as _e:
                                     print(_e)
@@ -1623,8 +1586,8 @@ class KPEDArchiver(Archiver):
 
                                 try:
                                     # check raws
-                                    s = roboao_obs.check_raws(_location=location, _date=date,
-                                                              _date_raw_data=date_raw_data)
+                                    s = kped_obs.check_raws(_location=location, _date=date,
+                                                            _date_raw_data=date_raw_data)
                                     # changes detected?
                                     if s['status'] == 'ok' and s['message'] is not None:
                                         # print(s['db_record_update'])
@@ -1646,7 +1609,7 @@ class KPEDArchiver(Archiver):
 
                                 try:
                                     # check that DB entry reflects reality
-                                    s = roboao_obs.check_db_entry()
+                                    s = kped_obs.check_db_entry()
                                     # discrepancy detected?
                                     if s['status'] == 'ok' and s['message'] is not None:
                                         self.update_db_entry(_collection='coll_obs', upd=s['db_record_update'])
@@ -1670,7 +1633,7 @@ class KPEDArchiver(Archiver):
 
                                 try:
                                     # check that DB entry reflects reality
-                                    s = roboao_obs.check_aux()
+                                    s = kped_obs.check_aux()
                                     # discrepancy detected?
                                     if s['status'] == 'ok' and s['message'] is not None:
                                         self.update_db_entry(_collection='coll_obs', upd=s['db_record_update'])
@@ -1696,7 +1659,7 @@ class KPEDArchiver(Archiver):
                                     # we'll be adding one task per observation at a time to avoid
                                     # complicating things.
                                     # self.task_runner will take care of executing the task
-                                    pipe_task = roboao_obs.get_task()
+                                    pipe_task = kped_obs.get_task()
 
                                     if pipe_task is not None:
                                         # print(pipe_task)
@@ -1731,7 +1694,7 @@ class KPEDArchiver(Archiver):
                                     # nothing to do about obs?
                                     if pipe_task is None:
                                         # check distribution status
-                                        s = roboao_obs.check_distributed()
+                                        s = kped_obs.check_distributed()
                                         if s['status'] == 'ok' and s['message'] is not None:
                                             self.update_db_entry(_collection='coll_obs', upd=s['db_record_update'])
                                             self.logger.info('updated distribution status for {:s}'.format(obs))
@@ -1920,17 +1883,13 @@ class KPEDArchiver(Archiver):
         _path_out = os.path.join(self.config['path']['path_archive'], _date, 'calib')
 
         # get calibration file names:
-        pattern_fits = r'.fits.bz2\Z'
+        pattern_fits = r'.fits.fz\Z'
         bias = [re.split(pattern_fits, s)[0] for s in _date_raw_data if re.match('bias_', s) is not None]
         flat = [re.split(pattern_fits, s)[0] for s in _date_raw_data if re.match('flat_', s) is not None]
         dark = [re.split(pattern_fits, s)[0] for s in _date_raw_data if re.match('dark_', s) is not None]
 
         # check in database if needs to be (re)done
         _select = self.db['coll_aux'].find_one({'_id': _date})
-
-        # FIXME: this is not to break older entries. remove once production ready
-        if 'calib' not in _select:
-            _select['calib'] = self.empty_db_aux_entry(None)['calib']
 
         # check folder modified date:
         time_tag = mdate_walk(_path_out)
@@ -1975,14 +1934,10 @@ class KPEDArchiver(Archiver):
                 # find the combine the darks:
                 for d in dark:
                     # file name with extension
-                    fz = '{:s}.fits.bz2'.format(d)
-                    f = '{:s}.fits'.format(d)
+                    f = '{:s}.fits.fz'.format(d)
                     camera_mode = f.split('_')[1]
                     if camera_mode != '0':
                         # mode 0 is handled below
-
-                        # unzip:
-                        lbunzip2(_path_in=path_date, _files=fz, _path_out=self.config['path']['path_tmp'], _keep=True)
 
                         unzipped = os.path.join(self.config['path']['path_tmp'], f)
 
@@ -1998,12 +1953,8 @@ class KPEDArchiver(Archiver):
 
                 # generate the flats' dark
                 # those files with mode '0' are the relevant ones:
-                fz = ['{:s}.fits.bz2'.format(d) for d in dark if d.split('_')[1] == '0']
-                f = ['{:s}.fits'.format(d) for d in dark if d.split('_')[1] == '0']
+                f = ['{:s}.fits.fz'.format(d) for d in dark if d.split('_')[1] == '0']
                 unzipped = [os.path.join(self.config['path']['path_tmp'], _f) for _f in f]
-
-                # unzip:
-                lbunzip2(_path_in=path_date, _files=fz, _path_out=self.config['path']['path_tmp'], _keep=True)
 
                 img = []
                 for uz in unzipped:
@@ -2021,16 +1972,12 @@ class KPEDArchiver(Archiver):
                     flat_dark = np.array(fdn[0].data, dtype=np.float32)
 
                 # make the flats:
-                for filt in ["Sg", "Si", "Sr", "Sz", "lp600", "c"]:
+                for filt in ["B", "g", "I", "r", "R", "U", "V"]:
                     print("Making {:s} flat".format(filt))
                     flats = []
 
-                    fz = ['{:s}.fits.bz2'.format(_f) for _f in flat if _f.split('_')[2] == filt]
-                    f = ['{:s}.fits'.format(_f) for _f in flat if _f.split('_')[2] == filt]
+                    f = ['{:s}.fits.fz'.format(_f) for _f in flat if _f.split('_')[2] == filt]
                     unzipped = [os.path.join(self.config['path']['path_tmp'], _f) for _f in f]
-
-                    # unzip:
-                    lbunzip2(_path_in=path_date, _files=fz, _path_out=self.config['path']['path_tmp'], _keep=True)
 
                     for uz in unzipped:
 
@@ -2084,12 +2031,13 @@ class KPEDArchiver(Archiver):
     # @timeout(seconds_before_timeout=600)
     def process_seeing(self, _path_in, _seeing_frames, _path_calib, _path_out,
                        _plate_scale=0.0351594, _fit_model='Gaussian2D', _box_size=100):
+        # TODO!
         try:
             # parse observation name
-            seeing_obs = RoboaoObservation(_id='9999_' + _seeing_frames[0], _config=self.config)
+            seeing_obs = KPEDObservation(_id='9999_' + _seeing_frames[0], _config=self.config)
             _filt, _date_utc = seeing_obs.db_entry['filter'], seeing_obs.db_entry['date_utc']
             # get fits header
-            fits_header = get_fits_header(os.path.join(_path_in, '{:s}.fits'.format(_seeing_frames[0])))
+            fits_header = get_fits_header(os.path.join(_path_in, '{:s}.fits.fz'.format(_seeing_frames[0])))
             _mode, _exp = str(int(fits_header['MODE_NUM'][0])), fits_header['EXPOSURE'][0]
             # print(_filt, _date_utc, _mode, _exp)
 
@@ -2097,7 +2045,7 @@ class KPEDArchiver(Archiver):
             # number of frames in each fits file
             n_frames_files = []
             for jj, _file in enumerate(_seeing_frames):
-                with fits.open(os.path.join(_path_in, '{:s}.fits'.format(_file)), memmap=True) as _hdulist:
+                with fits.open(os.path.join(_path_in, '{:s}.fits.fz'.format(_file)), memmap=True) as _hdulist:
                     if jj == 0:
                         # get image size (this would be (1024, 1024) for the Andor camera)
                         image_size = _hdulist[0].shape
@@ -2110,7 +2058,7 @@ class KPEDArchiver(Archiver):
             summed_seeing_limited_frame = np.zeros(image_size, dtype=np.float)
             for jj, _file in enumerate(_seeing_frames):
                 # print(jj)
-                with fits.open(os.path.join(_path_in, '{:s}.fits'.format(_file)), memmap=True) as _hdulist:
+                with fits.open(os.path.join(_path_in, '{:s}.fits.fz'.format(_file)), memmap=True) as _hdulist:
                     for ii, _ in enumerate(_hdulist):
                         try:
                             summed_seeing_limited_frame += np.nan_to_num(_hdulist[ii].data)
@@ -2123,12 +2071,12 @@ class KPEDArchiver(Archiver):
                 raise Exception('No data in the cube to be processed.')
 
             # load darks and flats
-            dark, flat = RoboaoPipeline.load_darks_and_flats(_path_calib, _mode, _filt, image_size[0])
+            dark, flat = KPEDPipeline.load_darks_and_flats(_path_calib, _mode, _filt, image_size[0])
             if dark is None or flat is None:
                 raise Exception('Could not open darks and flats')
 
-            summed_seeing_limited_frame = RoboaoFaintStarPipeline.calibrate_frame(summed_seeing_limited_frame / nf,
-                                                                                  dark, flat, _iter=2)
+            summed_seeing_limited_frame = KPEDRegistrationPipeline.calibrate_frame(summed_seeing_limited_frame / nf,
+                                                                                   dark, flat, _iter=2)
             summed_seeing_limited_frame = gaussian_filter(summed_seeing_limited_frame, sigma=1)
 
             # remove cosmic rays:
@@ -2146,8 +2094,8 @@ class KPEDArchiver(Archiver):
 
             export_fits(os.path.join(_path_in, _fits_stacked), summed_seeing_limited_frame)
 
-            _, x, y = RoboaoPipeline.trim_frame(_path_in, _fits_name=_fits_stacked,
-                                                _win=_box_size, _method='sextractor', _x=None, _y=None, _drizzled=False)
+            _, x, y = KPEDPipeline.trim_frame(_path_in, _fits_name=_fits_stacked,
+                                              _win=_box_size, _method='sextractor', _x=None, _y=None, _drizzled=False)
             print('centroid position: ', x, y)
 
             # remove fits:
@@ -2187,6 +2135,7 @@ class KPEDArchiver(Archiver):
     @timeout(seconds_before_timeout=600)
     def auxiliary(self, _location, _date, _date_raw_data):
         """
+        TODO:
             Handle auxiliary data
 
             It is monitored for time out
@@ -2196,14 +2145,16 @@ class KPEDArchiver(Archiver):
         :return:
         """
 
+        return {'status': 'ok', 'message': None}
+
         # DB entry:
         _select = self.db['coll_aux'].find_one({'_id': _date}, max_time_ms=5000)
 
         _path_out = os.path.join(self.config['path']['path_archive'], _date, 'summary')
 
         # get calibration file names:
-        pattern_fits = r'.fits.bz2\Z'
-        pattern_end = r'.[0-9]{6}.fits.bz2\Z'
+        pattern_fits = r'.fits.fz\Z'
+        pattern_end = r'.[0-9]{6}.fits.fz\Z'
         date_seeing = [re.split(pattern_fits, s)[0] for s in _date_raw_data
                        if re.search(pattern_end, s) is not None and
                        re.match('seeing_', s) is not None]
@@ -2229,10 +2180,10 @@ class KPEDArchiver(Archiver):
         # unzipped file names:
         _obsz = []
         for _s in _seeing_frames:
-            _s_raws = ['{:s}.fits.bz2'.format(_s[0])]
+            _s_raws = ['{:s}.fits.fz'.format(_s[0])]
             _s_obsz = [_s[0]]
             for _si in range(_s[1] - 1):
-                _s_raws.append('{:s}_{:d}.fits.bz2'.format(_s[0], _si))
+                _s_raws.append('{:s}_{:d}.fits.fz'.format(_s[0], _si))
                 _s_obsz.append('{:s}_{:d}'.format(_s[0], _si))
             _seeing_raws.append(_s_raws)
             _obsz.append(_s_obsz)
@@ -2240,11 +2191,8 @@ class KPEDArchiver(Archiver):
         _seeing_data = [[_s[0], None, None, None, None, None, None] for _s in _seeing_frames]
 
         # get plate scale:
-        if datetime.datetime.strptime(_date, '%Y%m%d').replace(tzinfo=pytz.utc) > \
-                datetime.datetime(2015, 9, 1).replace(tzinfo=pytz.utc):
-            telescope = 'KPNO_2.1m'
-        else:
-            telescope = 'Palomar_P60'
+        telescope = 'KPNO_2.1m'
+
         # this is not drizzled!
         plate_scale = self.config['telescope'][telescope]['scale']
 
@@ -2259,10 +2207,6 @@ class KPEDArchiver(Archiver):
                 if ('seeing' not in _select) or (
                         (not _select['seeing']['done'] or (time_tag - last_modified).total_seconds() > 1.0) and \
                         (_select['seeing']['retries'] <= self.config['misc']['max_retries'])):
-
-                    # unbzip source file(s):
-                    lbunzip2(_path_in=_path_seeing, _files=list(chain.from_iterable(_seeing_raws)),
-                             _path_out=_path_tmp, _keep=True, _v=True)
 
                     seeing_plot = []
                     for ii, _obs in enumerate(_obsz):
@@ -2475,7 +2419,7 @@ class Observation(object):
         raise NotImplementedError
 
 
-class RoboaoObservation(Observation):
+class KPEDObservation(Observation):
     def __init__(self, _id=None, _aux=None, _program_pi=None, _db_entry=None, _config=None):
         """
             Initialize Observation object
@@ -2484,7 +2428,7 @@ class RoboaoObservation(Observation):
         :return:
         """
         ''' initialize super class '''
-        super(RoboaoObservation, self).__init__(_id=_id, _aux=_aux)
+        super(KPEDObservation, self).__init__(_id=_id, _aux=_aux)
 
         # current DB entry
         if _db_entry is None:
@@ -2501,171 +2445,27 @@ class RoboaoObservation(Observation):
 
         # print(self.db_entry)
         # pass on the config
-        assert _config is not None, 'must pass config to RoboaoObservation ' + _id
+        assert _config is not None, 'must pass config to KPEDObservation ' + _id
         self.config = _config
 
     def check_db_entry(self):
         """
             Check if DB entry reflects reality
-            Might add more checks in the future. Currently only checks pipelining status
+
         :return:
         """
         _date = self.db_entry['date_utc'].strftime('%Y%m%d')
 
-        _pipe_names = ['bright_star', 'faint_star']
-
-        for _pipe_name in _pipe_names:
-
-            try:
-                # pipe self
-                _path_pipe = os.path.join(self.config['path']['path_archive'], _date, self.id, _pipe_name)
-
-                # path exists? if yes -- processing must have occurred (to some extent at least)
-                if os.path.exists(_path_pipe):
-                    # do not check enqueued stuff here. make sure 100p.fits exists
-                    if (_pipe_name in self.db_entry['pipelined']) and \
-                            (not self.db_entry['pipelined'][_pipe_name]['status']['enqueued']):
-                        # check modified date:
-                        _fits = '100p.fits' if _pipe_name == 'bright_star' \
-                            else '{:s}_summed.fits'.format(self.db_entry['_id'])
-                        if _fits in os.listdir(_path_pipe):
-                            time_tag = datetime.datetime.utcfromtimestamp(os.stat(os.path.join(_path_pipe, _fits)).st_mtime)
-                            # time_tag = mdate_walk(_path_pipe)
-                            # bad time tag? force redo!
-                            if abs((time_tag -
-                                    self.db_entry['pipelined'][_pipe_name]['last_modified']).total_seconds()) > 1.0:
-
-                                # make sure nothing propagates accidentally before DB record is updated
-                                self.db_entry['pipelined'].pop(_pipe_name, None)
-                                self.db_entry['distributed']['status'] = False
-                                self.db_entry['distributed']['location'] = []
-                                _utc_now = utc_now()
-                                self.db_entry['distributed']['last_modified'] = _utc_now
-
-                                return {'status': 'ok',
-                                        'message': 'DB entry for {:s} does not reflect reality'.format(self.id),
-                                        'db_record_update': ({'_id': self.id},
-                                                             {
-                                                                 '$set': {
-                                                                     'distributed.status': False,
-                                                                     'distributed.location': [],
-                                                                     'distributed.last_modified': _utc_now
-                                                                 },
-                                                                 '$unset': {
-                                                                     'pipelined.{:s}'.format(_pipe_name): 1
-                                                                 }
-                                                             }
-                                                             )
-                                        }
-                # path does not exist? make sure it's not present in DB entry and/or not marked 'done'
-                elif (_pipe_name in self.db_entry['pipelined']) and \
-                        self.db_entry['pipelined'][_pipe_name]['status']['done']:
-
-                    self.db_entry['pipelined'].pop(_pipe_name, None)
-                    self.db_entry['distributed']['status'] = False
-                    self.db_entry['distributed']['location'] = []
-                    _utc_now = utc_now()
-                    self.db_entry['distributed']['last_modified'] = _utc_now
-
-                    return {'status': 'ok', 'message': 'DB entry for {:s} does not reflect reality'.format(self.id),
-                            'db_record_update': ({'_id': self.id},
-                                                 {
-                                                     '$set': {
-                                                                 'distributed.status': False,
-                                                                 'distributed.location': [],
-                                                                 'distributed.last_modified': _utc_now
-                                                             },
-                                                     '$unset': {
-                                                         'pipelined.{:s}'.format(_pipe_name): 1
-                                                     }
-                                                 }
-                                                 )
-                            }
-
-            except Exception as _e:
-                traceback.print_exc()
-
-                self.db_entry['pipelined'].pop(_pipe_name, None)
-                self.db_entry['distributed']['status'] = False
-                self.db_entry['distributed']['location'] = []
-                _utc_now = utc_now()
-                self.db_entry['distributed']['last_modified'] = _utc_now
-
-                return {'status': 'error', 'message': str(_e),
-                        'db_record_update': ({'_id': self.id},
-                                             {
-                                                 '$set': {
-                                                     'distributed.status': False,
-                                                     'distributed.location': [],
-                                                     'distributed.last_modified': _utc_now
-                                                 },
-                                                 '$unset': {
-                                                    'pipelined.{:s}'.format(_pipe_name): 1
-                                                 }
-                                             }
-                                             )
-                        }
+        # TODO?
+        # TODO: instead, at startup, mark all enqueued things failed
 
         return {'status': 'ok', 'message': None}
 
     def check_aux(self):
-        try:
-            if (self.aux is not None) and ('seeing' in self.aux):
-                if len(self.aux['seeing']['frames']) > 0:
-                    # date_utc, seeing, filter, exposure:
-                    seeing_data = [[s[1], s[3], s[2], s[6]] for s in self.aux['seeing']['frames'] if None not in s]
-                    # ain't got no useful data?
-                    if len(seeing_data) == 0:
-                        return {'status': 'ok', 'message': None}
-                    seeing_data = np.array(seeing_data)
-                    # sort by time stamp:
-                    seeing_data = seeing_data[seeing_data[:, 0].argsort()]
+        # TODO?
+        _date = self.db_entry['date_utc'].strftime('%Y%m%d')
 
-                    seeing_mean = np.mean(seeing_data[:, 1])
-                    seeing_median = np.median(seeing_data[:, 1])
-
-                    # find closest seeing measurement in time:
-                    seeing_nearest_index = np.argmin(np.abs(self.db_entry['date_utc'] - seeing_data[:, 0]))
-
-                    if ((self.db_entry['seeing']['median'] is None) or
-                            (abs(self.db_entry['seeing']['median'] - seeing_median) > 1e-4)) or \
-                            ((self.db_entry['seeing']['mean'] is None) or
-                                 (abs(self.db_entry['seeing']['mean'] - seeing_mean) > 1e-4)) or \
-                            ((self.db_entry['seeing']['nearest'] is None) or
-                            (abs(self.db_entry['seeing']['nearest'][1] - seeing_data[seeing_nearest_index, 1]) > 1e-4)):
-
-                        # DB updates are handled by the main archiver process
-                        # we'll provide it with proper query to feed into pymongo's update_one()
-                        return {'status': 'ok', 'message': 'updated seeing info for {:s}'.format(self.id),
-                                'db_record_update': ({'_id': self.id},
-                                                     {
-                                                         '$set': {
-                                                            'seeing.median': seeing_median,
-                                                            'seeing.mean': seeing_mean,
-                                                            'seeing.nearest': [seeing_data[seeing_nearest_index, 0],
-                                                                               seeing_data[seeing_nearest_index, 1]],
-                                                            'seeing.last_modified': utc_now()
-                                                         }
-                                                     }
-                                                     )
-                                }
-
-            return {'status': 'ok', 'message': None}
-
-        except Exception as _e:
-            traceback.print_exc()
-            return {'status': 'error', 'message': str(_e),
-                    'db_record_update': ({'_id': self.id},
-                                         {
-                                             '$set': {
-                                                 'seeing.median': None,
-                                                 'seeing.mean': None,
-                                                 'seeing.nearest': None,
-                                                 'seeing.last_modified': utc_now()
-                                             }
-                                         }
-                                         )
-                    }
+        return {'status': 'ok', 'message': None}
 
     def get_task(self):
         """
@@ -2675,17 +2475,17 @@ class RoboaoObservation(Observation):
         """
         _task = None
 
-        # BSP?
-        ''' Bright star pipeline '''
-        pipe = RoboaoBrightStarPipeline(_config=self.config, _db_entry=self.db_entry)
+        # Registration?
+        ''' Registration pipeline '''
+        pipe = KPEDRegistrationPipeline(_config=self.config, _db_entry=self.db_entry)
         # check conditions necessary to run (defined in config.json):
         go = pipe.check_necessary_conditions()
-        # print('{:s} BSP go: '.format(self.id), go)
+        # print('{:s} RP go: '.format(self.id), go)
 
         # good to go?
         if go:
             # should and can run BSP pipeline itself?
-            _part = 'bright_star_pipeline'
+            _part = 'registration_pipeline'
             go = pipe.check_conditions(part=_part)
             if go:
                 # mark enqueued
@@ -2701,133 +2501,20 @@ class RoboaoObservation(Observation):
                          }
                 return _task
 
-            # should and can run Strehl calculation?
-            _part = 'bright_star_pipeline:strehl'
-            go = pipe.check_conditions(part=_part)
-            if go:
-                # mark enqueued
-                pipe.db_entry['pipelined']['{:s}'.format(pipe.name)]['strehl']['status']['enqueued'] = True
-                # pipe.db_entry['pipelined']['{:s}'.format(pipe.name)]['strehl']['last_modified'] = utc_now()
-                _task = {'task': _part, 'id': self.id, 'config': self.config, 'db_entry': pipe.db_entry,
-                         'db_record_update': ({'_id': self.id},
-                                              {'$set': {
-                                                  'pipelined.{:s}'.format(pipe.name):
-                                                      pipe.db_entry['pipelined']['{:s}'.format(pipe.name)]
-                                              }}
-                                              )
-                         }
-                return _task
-
             # should and can run preview generation for BSP pipeline itself?
-            _part = 'bright_star_pipeline:preview'
+            _part = 'registration_pipeline:preview'
             go = pipe.check_conditions(part=_part)
             # print(self.id, _part, go)
             if go:
                 _task = {'task': _part, 'id': self.id, 'config': self.config, 'db_entry': pipe.db_entry}
                 return _task
 
-            # should and can run PCA pipeline?
-            _part = 'bright_star_pipeline:pca'
-            go = pipe.check_conditions(part=_part)
-            if go:
-                # mark enqueued
-                pipe.db_entry['pipelined']['{:s}'.format(pipe.name)]['pca']['status']['enqueued'] = True
-                # pipe.db_entry['pipelined']['{:s}'.format(pipe.name)]['pca']['last_modified'] = utc_now()
-                _task = {'task': _part, 'id': self.id, 'config': self.config, 'db_entry': pipe.db_entry,
-                         'db_record_update': ({'_id': self.id},
-                                              {'$set': {
-                                                  'pipelined.{:s}'.format(pipe.name):
-                                                      pipe.db_entry['pipelined']['{:s}'.format(pipe.name)]
-                                              }}
-                                              )
-                         }
-                return _task
+        # TODO:
+        # Photometry?
+        ''' Photometry pipeline '''
 
-            # should and can run preview generation for PCA results?
-            _part = 'bright_star_pipeline:pca:preview'
-            go = pipe.check_conditions(part=_part)
-            if go:
-                _task = {'task': _part, 'id': self.id, 'config': self.config, 'db_entry': pipe.db_entry}
-                return _task
-
-        # FSP?
-        ''' Faint star pipeline '''
-        pipe = RoboaoFaintStarPipeline(_config=self.config, _db_entry=self.db_entry)
-        # check conditions necessary to run (defined in config.json):
-        go = pipe.check_necessary_conditions()
-        # print('{:s} FSP ok to go: '.format(self.id), go)
-
-        # good to go?
-        if go:
-            # should and can run FSP pipeline itself?
-            _part = 'faint_star_pipeline'
-            go = pipe.check_conditions(part=_part)
-            # print('{:s} FSP go: '.format(self.id), go)
-            if go:
-                # mark enqueued
-                pipe.db_entry['pipelined']['{:s}'.format(pipe.name)]['status']['enqueued'] = True
-                _task = {'task': _part, 'id': self.id, 'config': self.config, 'db_entry': pipe.db_entry,
-                         'db_record_update': ({'_id': self.id},
-                                              {'$set': {
-                                                  'pipelined.{:s}'.format(pipe.name):
-                                                      pipe.db_entry['pipelined']['{:s}'.format(pipe.name)]
-                                              }}
-                                              )
-                         }
-                return _task
-
-            # should and can run Strehl calculation?
-            _part = 'faint_star_pipeline:strehl'
-            go = pipe.check_conditions(part=_part)
-            if go:
-                # mark enqueued
-                pipe.db_entry['pipelined']['{:s}'.format(pipe.name)]['strehl']['status']['enqueued'] = True
-                # pipe.db_entry['pipelined']['{:s}'.format(pipe.name)]['strehl']['last_modified'] = utc_now()
-                _task = {'task': _part, 'id': self.id, 'config': self.config, 'db_entry': pipe.db_entry,
-                         'db_record_update': ({'_id': self.id},
-                                              {'$set': {
-                                                  'pipelined.{:s}'.format(pipe.name):
-                                                      pipe.db_entry['pipelined']['{:s}'.format(pipe.name)]
-                                              }}
-                                              )
-                         }
-                return _task
-
-            # should and can run preview generation for FSP pipeline itself?
-            _part = 'faint_star_pipeline:preview'
-            go = pipe.check_conditions(part=_part)
-            # print(self.id, _part, go)
-            if go:
-                _task = {'task': _part, 'id': self.id, 'config': self.config, 'db_entry': pipe.db_entry}
-                return _task
-
-            # should and can run PCA pipeline?
-            _part = 'faint_star_pipeline:pca'
-            go = pipe.check_conditions(part=_part)
-            if go:
-                # mark enqueued
-                pipe.db_entry['pipelined']['{:s}'.format(pipe.name)]['pca']['status']['enqueued'] = True
-                # pipe.db_entry['pipelined']['{:s}'.format(pipe.name)]['pca']['last_modified'] = utc_now()
-                _task = {'task': _part, 'id': self.id, 'config': self.config, 'db_entry': pipe.db_entry,
-                         'db_record_update': ({'_id': self.id},
-                                              {'$set': {
-                                                  'pipelined.{:s}'.format(pipe.name):
-                                                      pipe.db_entry['pipelined']['{:s}'.format(pipe.name)]
-                                              }}
-                                              )
-                         }
-                return _task
-
-            # should and can run preview generation for PCA results?
-            _part = 'faint_star_pipeline:pca:preview'
-            go = pipe.check_conditions(part=_part)
-            if go:
-                _task = {'task': _part, 'id': self.id, 'config': self.config, 'db_entry': pipe.db_entry}
-                return _task
-
-        # TODO: EOP?
-
-        # FIXME: do something something else?
+        # Photometry?
+        ''' Astrometry pipeline '''
 
         return _task
 
@@ -2956,7 +2643,7 @@ class RoboaoObservation(Observation):
                                              {
                                                  '$set': {
                                                     'exposure': self.db_entry['exposure'],
-                                                    'magnitude': self.db_entry['magnitude'],
+                                                    # 'magnitude': self.db_entry['magnitude'],
                                                     'fits_header': self.db_entry['fits_header'],
                                                     'coordinates': self.db_entry['coordinates'],
                                                     'raw_data.location': self.db_entry['raw_data']['location'],
@@ -2978,43 +2665,8 @@ class RoboaoObservation(Observation):
 
     def check_distributed(self):
         try:
-            if not self.db_entry['distributed']['status']:
-                # create a tarball
-                _date = self.db_entry['date_utc'].strftime('%Y%m%d')
-                _path_archive = os.path.join(self.config['path']['path_archive'], _date)
-                _obs = self.id
-
-                # nothing to compress?
-                if not os.path.exists(os.path.join(_path_archive, _obs)):
-                    return {'status': 'ok', 'message': None}
-
-                pipelines = [_path for _path in os.listdir(os.path.join(_path_archive, _obs))
-                             if os.path.isdir(os.path.join(_path_archive, _obs, _path)) and _path[0] != '.']
-                _p = subprocess.run(
-                    ['tar', '-cf', '{:s}'.format(os.path.join(_path_archive, _obs, '{:s}.tar'.format(_obs))),
-                     '-C', os.path.join(_path_archive, _obs)] + pipelines)
-
-                # compress it:
-                _p = subprocess.run(['lbzip2', '-f', '{:s}'.format(os.path.join(_path_archive,
-                                                                                  _obs, '{:s}.tar'.format(_obs))),
-                                       '--best'])
-
-                return {'status': 'ok', 'message': 'Data compressed, observation marked as distributed.',
-                        'db_record_update': ({'_id': self.id},
-                                             {
-                                                 '$set': {
-                                                     'distributed.status': True,
-                                                     'distributed.location': ['{:s}:{:s}'.format(
-                                                            self.config['server']['analysis_machine_external_host'],
-                                                            self.config['server']['analysis_machine_external_port']),
-                                                            _path_archive],
-                                                     'distributed.last_modified': utc_now()
-                                                 }
-                                             }
-                                             )
-                        }
-            else:
-                return {'status': 'ok', 'message': None}
+            # TODO:
+            return {'status': 'ok', 'message': None}
 
         except Exception as _e:
             traceback.print_exc()
@@ -3041,8 +2693,10 @@ class RoboaoObservation(Observation):
         _obs = self.id
         # parse name:
         _tmp = _obs.split('_')
-        # program num. it will be a string in the future
-        _prog_num = str(_tmp[0])
+        # TODO: if we add program nums in the future
+        # _prog_num = str(_tmp[0])
+        _prog_num = str(0)
+
         # who's pi?
         if (_program_pi is not None) and (_prog_num in _program_pi.keys()):
             _prog_pi = str(_program_pi[_prog_num])
@@ -3050,21 +2704,16 @@ class RoboaoObservation(Observation):
             # play safe if pi's unknown:
             _prog_pi = ['admin']
         # stack name together if necessary (if contains underscores):
-        _sou_name = '_'.join(_tmp[1:-5])
+        _sou_name = '_'.join(_tmp[0:-5])
         # code of the filter used:
-        _filt = _tmp[-4:-3][0]
+        _filt = _tmp[-5:-4][0]
         # date and time of obs:
-        _date_utc = datetime.datetime.strptime(_tmp[-2] + _tmp[-1], '%Y%m%d%H%M%S.%f')
-        # camera:
-        _camera = _tmp[-5:-4][0]
+        _date_utc = datetime.datetime.strptime(_tmp[-3] + _tmp[-2], '%Y%m%d%H%M%S.%f')
         # marker:
         _marker = _tmp[-3:-2][0]
 
-        # telescope: TODO: move this to config.json
-        if _date_utc > datetime.datetime(2015, 10, 1):
-            _telescope = 'KPNO_2.1m'
-        else:
-            _telescope = 'Palomar_P60'
+        # telescope:
+        _telescope = 'KPNO_2.1m'
 
         return {
             'science_program': {
@@ -3075,7 +2724,6 @@ class RoboaoObservation(Observation):
             'filter': _filt,
             'date_utc': _date_utc,
             'marker': _marker,
-            'camera': _camera,
             'telescope': _telescope
         }
 
@@ -3096,27 +2744,18 @@ class RoboaoObservation(Observation):
             },
             'date_utc': None,
             'telescope': None,
-            'camera': None,
             'filter': None,
             'exposure': None,
-            'magnitude': None,
             'coordinates': {
                 'epoch': None,
                 'radec': None,
                 'radec_str': None,
-                # 'radec_geojson': None,  # don't init, that spoils indexing; just ignore
                 'azel': None
             },
             'fits_header': {},
 
             'pipelined': {},
 
-            'seeing': {
-                'median': None,
-                'mean': None,
-                'nearest': None,
-                'last_modified': time_now_utc
-            },
             'distributed': {
                 'status': False,
                 'location': [],
@@ -3140,10 +2779,6 @@ class Pipeline(object):
         """
         self.config = _config
         self.db_entry = _db_entry
-        # pipeline name
-        # self.name = None
-        # this is what gets injected into DB
-        # self.status = OrderedDict()
 
     def check_necessary_conditions(self):
         """
@@ -3176,7 +2811,7 @@ class Pipeline(object):
         raise NotImplementedError
 
 
-class RoboaoPipeline(Pipeline):
+class KPEDPipeline(Pipeline):
     def __init__(self, _config, _db_entry):
         """
             Pipeline
@@ -3184,14 +2819,10 @@ class RoboaoPipeline(Pipeline):
         :param _db_entry: observation DB entry
         """
         ''' initialize super class '''
-        super(RoboaoPipeline, self).__init__(_config=_config, _db_entry=_db_entry)
+        super(KPEDPipeline, self).__init__(_config=_config, _db_entry=_db_entry)
 
         ''' figure out where we are '''
-        # TODO: move to config.json
-        if self.db_entry['date_utc'].replace(tzinfo=pytz.utc) > datetime.datetime(2015, 9, 1).replace(tzinfo=pytz.utc):
-            self.telescope = 'KPNO_2.1m'
-        else:
-            self.telescope = 'Palomar_P60'
+        self.telescope = 'KPNO_2.1m'
 
     def check_necessary_conditions(self):
         """
@@ -3385,19 +3016,6 @@ class RoboaoPipeline(Pipeline):
             raise Exception('Contrast correction option not recognized')
 
     @staticmethod
-    def get_xy_from_frames_txt(_path):
-        """
-            Get median centroid position for a lucky-pipelined image
-        :param _path:
-        :return:
-        """
-        with open(os.path.join(_path, 'frames.txt'), 'r') as _f:
-            f_lines = _f.readlines()
-        xy = np.array([map(float, l.split()[3:5]) for l in f_lines if l[0] != '#'])
-
-        return np.median(xy[:, 0]), np.median(xy[:, 1])
-
-    @staticmethod
     def get_xy_from_shifts_txt(_path):
         with open(os.path.join(_path, 'shifts.txt')) as _f:
             f_lines = _f.readlines()
@@ -3408,51 +3026,6 @@ class RoboaoPipeline(Pipeline):
         x_lock, y_lock = int(_tmp[-2]), int(_tmp[-1])
 
         return x_lock, y_lock
-
-    @staticmethod
-    def get_xy_from_pipeline_settings_txt(_path, _first=True):
-        """
-            Get centroid position for a lucky-pipelined image
-        :param _path:
-        :param _first: output the x,y from the first run? if False, output from the last
-        :return:
-        """
-        with open(os.path.join(_path, 'pipeline_settings.txt'), 'r') as _f:
-            f_lines = _f.readlines()
-
-        for l in f_lines:
-            _tmp = re.search(r'\d\s+\d\s+\((\d+),(\d+)\),\((\d+),(\d+)\)\n', l)
-            if _tmp is not None:
-                _x = (int(_tmp.group(1)) + int(_tmp.group(3))) / 2
-                _y = (int(_tmp.group(2)) + int(_tmp.group(4))) / 2
-                if _first:
-                    break
-
-        return _x, _y
-
-    @staticmethod
-    def get_best_pipe_frame(_path):
-        """
-            Get file and frame numbers with the highest Strehl for lucky-pipelined data
-        :param _path:
-        :return:
-        """
-        try:
-            with open(os.path.join(_path, 'sorted.txt'), 'r') as _f:
-                f_lines = _f.readlines()
-            _tmp = f_lines[1].split()[-1]
-            frame_num = int(re.search(r'.fits\[(\d+)\]', _tmp).group(1))
-            file_num_pattern = re.search(r'_(\d+).fits', _tmp)
-            # is it the first file? its number 0:
-            if file_num_pattern is None:
-                file_num = 0
-            # no? then from blabla_n.fits its number is n+1
-            else:
-                file_num = int(file_num_pattern.group(1)) + 1
-            return file_num, frame_num
-        except Exception as _e:
-            print(_e)
-            return -1, -1
 
     @classmethod
     def trim_frame(cls, _path, _fits_name, _win=100, _method='sextractor', _x=None, _y=None, _drizzled=True):
@@ -3544,22 +3117,7 @@ class RoboaoPipeline(Pipeline):
             else:
                 _win = 50
             x, y = map(int, [x, y])
-        elif _method == 'frames.txt':
-            if _win is None:
-                _win = 100
-            y, x = cls.get_xy_from_frames_txt(_path)
-            if _drizzled:
-                x *= 2.0
-                y *= 2.0
-            x, y = map(int, [x, y])
-        elif _method == 'pipeline_settings.txt':
-            if _win is None:
-                _win = 100
-            y, x = cls.get_xy_from_pipeline_settings_txt(_path)
-            if _drizzled:
-                x *= 2.0
-                y *= 2.0
-            x, y = map(int, [x, y])
+
         elif _method == 'manual' and _x is not None and _y is not None:
             if _win is None:
                 _win = 100
@@ -3598,7 +3156,7 @@ class RoboaoPipeline(Pipeline):
 
     @staticmethod
     def preview(_path_out, _obs, preview_img, preview_img_cropped,
-                SR=None, _fow_x=36, _pix_x=1024, _drizzled=True,
+                SR=None, _fow_x=264, _pix_x=1024, _drizzled=False,
                 _x=None, _y=None, objects=None):
         """
         :param _path_out:
@@ -3644,46 +3202,6 @@ class RoboaoPipeline(Pipeline):
             os.makedirs(_path_out)
         plt.savefig(os.path.join(_path_out, fname_full), dpi=300)
 
-        ''' cropped image: '''
-        # save cropped image
-        plt.close('all')
-        fig = plt.figure()
-        fig.set_size_inches(3, 3, forward=False)
-        # ax = fig.add_subplot(111)
-        ax = plt.Axes(fig, [0., 0., 1., 1.])
-        ax.set_axis_off()
-        fig.add_axes(ax)
-        ax.imshow(preview_img_cropped, cmap=plt.cm.magma, origin='lower', interpolation='nearest')
-        # add scale bar:
-        # draw a horizontal bar with length of 0.1*x_size
-        # (ax.transData) with a label underneath.
-        bar_len = preview_img_cropped.shape[0] * 0.1
-        mltplr = 2 if _drizzled else 1
-        bar_len_str = '{:.1f}'.format(bar_len * _fow_x / _pix_x / mltplr)
-        asb = AnchoredSizeBar(ax.transData,
-                              bar_len,
-                              bar_len_str[0] + r"$^{\prime\prime}\!\!\!.$" + bar_len_str[-1],
-                              loc=4, pad=0.3, borderpad=0.5, sep=10, frameon=False)
-        ax.add_artist(asb)
-        # add Strehl ratio
-        if SR is not None:
-            asb2 = AnchoredSizeBar(ax.transData,
-                                   0,
-                                   'Strehl: {:.2f}%'.format(float(SR)),
-                                   loc=2, pad=0.3, borderpad=0.4, sep=5, frameon=False)
-            ax.add_artist(asb2)
-            # asb3 = AnchoredSizeBar(ax.transData,
-            #                        0,
-            #                        'SR: {:.2f}%'.format(float(SR)),
-            #                        loc=3, pad=0.3, borderpad=0.5, sep=10, frameon=False)
-            # ax.add_artist(asb3)
-
-        # save cropped figure
-        fname_cropped = '{:s}_cropped.png'.format(_obs)
-        if not (os.path.exists(_path_out)):
-            os.makedirs(_path_out)
-        fig.savefig(os.path.join(_path_out, fname_cropped), dpi=300)
-
     @staticmethod
     def gaussian(p, x):
         return p[0] + p[1] * (np.exp(-x * x / (2.0 * p[2] * p[2])))
@@ -3709,121 +3227,10 @@ class RoboaoPipeline(Pipeline):
 
         return res
 
-    @classmethod
-    def bad_obs_check(cls, p, return_halo=True, ps=0.0175797):
-        pix_rad = []
-        pix_vals = []
-        core_pix_rad = []
-        core_pix_vals = []
 
-        # Icy, Icx = numpy.unravel_index(p.argmax(), p.shape)
-
-        for x in range(p.shape[1] // 2 - 20, p.shape[1] // 2 + 20 + 1):
-            for y in range(p.shape[0] // 2 - 20, p.shape[0] // 2 + 20 + 1):
-                r = np.sqrt((x - p.shape[1] / 2) ** 2 + (y - p.shape[0] / 2) ** 2)
-                if r > 3:  # remove core
-                    pix_rad.append(r)
-                    pix_vals.append(p[y][x])
-                else:
-                    core_pix_rad.append(r)
-                    core_pix_vals.append(p[y][x])
-
-        try:
-            if return_halo:
-                p0 = [0.0, np.max(pix_vals), 20.0, 2.0]
-                p = fmin(cls.residuals, p0, args=(pix_rad, pix_vals), maxiter=1000, maxfun=1000,
-                         ftol=1e-3, xtol=1e-3, disp=False)
-
-            p0 = [0.0, np.max(core_pix_vals), 5.0, 2.0]
-            core_p = fmin(cls.residuals, p0, args=(core_pix_rad, core_pix_vals), maxiter=1000, maxfun=1000,
-                          ftol=1e-3, xtol=1e-3, disp=False)
-
-            # Palomar PS = 0.021, KP PS = 0.0175797
-            _core = core_p[2] * ps
-            if return_halo:
-                _halo = p[2] * ps
-                return _core, _halo
-            else:
-                return _core
-
-        except OverflowError:
-            _core = 0
-            _halo = 999
-
-            if return_halo:
-                return _core, _halo
-            else:
-                return _core
-
-    def Strehl_calculator(self, image_data, _Strehl_factor, _plate_scale, _boxsize):
-
-        """ Calculates the Strehl ratio of an image
-        Inputs:
-            - image_data: image data
-            - Strehl_factor: from model PSF
-            - boxsize: from model PSF
-            - plate_scale: plate scale of telescope in arcseconds/pixel
-        Output:
-            Strehl ratio (as a decimal)
-
-            """
-
-        ##################################################
-        # normalize real image PSF by the flux in some radius
-        ##################################################
-
-        ##################################################
-        #  Choose radius with 95-99% light in model PSF ##
-        ##################################################
-
-        # find peak image flux to center box around
-        peak_ind = np.where(image_data == np.max(image_data))
-        peak1, peak2 = peak_ind[0][0], peak_ind[1][0]
-        # print("max intensity =", np.max(image_data), "located at:", peak1, ",", peak2, "pixels")
-
-        # find array within desired radius
-        box_roboao, box_roboao_fraction = self.makebox(image_data, round(_boxsize / 2.), peak1, peak2)
-        # print("size of box", np.shape(box_roboao))
-
-        # sum the fluxes within the desired radius
-        total_box_flux = np.sum(box_roboao)
-        # print("total flux in box", total_box_flux)
-
-        # normalize real image PSF by the flux in some radius:
-        image_norm = image_data / total_box_flux
-
-        ########################
-        # divide normalized peak image flux by strehl factor
-        ########################
-
-        image_norm_peak = np.max(image_norm)
-        # print("normalized peak", image_norm_peak)
-
-        #####################################################
-        # ############# CALCULATE STREHL RATIO ##############
-        #####################################################
-        Strehl_ratio = image_norm_peak / _Strehl_factor
-        # print('\n----------------------------------')
-        # print("Strehl ratio", Strehl_ratio * 100, '%')
-        # print("----------------------------------")
-
-        max_inds = np.where(box_roboao == np.max(box_roboao))
-
-        centroid = Star(max_inds[0][0], max_inds[1][0], box_roboao)
-        FWHM, FWHM_x, FWHM_y = centroid.fwhm
-        fwhm_arcsec = FWHM * _plate_scale
-        # print(FWHM, FWHM_x, FWHM_y)
-        # print('image FWHM: {:.5f}\"\n'.format(fwhm_arcsec))
-
-        # model = centroid.model()(centroid._XGrid, centroid._YGrid)
-        # export_fits('1.fits', model)
-
-        return Strehl_ratio, fwhm_arcsec, box_roboao
-
-
-class RoboaoBrightStarPipeline(RoboaoPipeline):
+class KPEDRegistrationPipeline(KPEDPipeline):
     """
-        Robo-AO's Bright Star Pipeline
+        KPED's Registration Pipeline
     """
     def __init__(self, _config, _db_entry):
         """
@@ -3832,10 +3239,10 @@ class RoboaoBrightStarPipeline(RoboaoPipeline):
             :param _db_entry: observation DB entry
         """
         ''' initialize super class '''
-        super(RoboaoBrightStarPipeline, self).__init__(_config=_config, _db_entry=_db_entry)
+        super(KPEDRegistrationPipeline, self).__init__(_config=_config, _db_entry=_db_entry)
 
         # pipeline name. This goes to 'pipelined' field of obs DB entry
-        self.name = 'bright_star'
+        self.name = 'registration'
 
         # initialize status
         if self.name not in self.db_entry['pipelined']:
@@ -3872,1082 +3279,8 @@ class RoboaoBrightStarPipeline(RoboaoPipeline):
         """
         assert part is not None, 'must specify what to check'
 
-        # check the BSP itself?
-        if part == 'bright_star_pipeline':
-            # force redo requested?
-            _force_redo = self.db_entry['pipelined'][self.name]['status']['force_redo']
-            # pipeline done?
-            _done = self.db_entry['pipelined'][self.name]['status']['done']
-            # how many times tried?
-            _num_tries = self.db_entry['pipelined'][self.name]['status']['retries']
-
-            go = _force_redo or ((not _done) and (_num_tries <= self.config['misc']['max_retries']))
-
-            return go
-
-        # Preview generation for the results of BSP processing?
-        elif part == 'bright_star_pipeline:preview':
-
-            # pipeline done?
-            _pipe_done = self.db_entry['pipelined'][self.name]['status']['done']
-
-            # failed?
-            _pipe_failed = self.db_entry['pipelined'][self.name]['classified_as'] == 'failed'
-
-            # preview generated?
-            _preview_done = self.db_entry['pipelined'][self.name]['preview']['done']
-
-            # last_modified == pipe_last_modified?
-            _outdated = abs((self.db_entry['pipelined'][self.name]['preview']['last_modified'] -
-                             self.db_entry['pipelined'][self.name]['last_modified']).total_seconds()) > 1.0
-
-            # how many times tried?
-            _num_tries = self.db_entry['pipelined'][self.name]['preview']['retries']
-
-            # if self.db_entry['_id'] == '3_J1144+6946_VIC_Si_o_20170607_043349.042103':
-            #     print(_pipe_done, _pipe_failed, _preview_done, _outdated)
-            #     input('WAIT!!')
-
-            # print(_pipe_done, _pipe_failed, _preview_done, _outdated)
-            go = (_pipe_done and (not _pipe_failed)) and ((not _preview_done) or _outdated) \
-                 and (_num_tries <= self.config['misc']['max_retries'])
-
-            return go
-
-        # Strehl calculation for the results of BSP processing?
-        elif part == 'bright_star_pipeline:strehl':
-
-            # pipeline done?
-            _pipe_done = self.db_entry['pipelined'][self.name]['status']['done']
-
-            # failed?
-            _pipe_failed = self.db_entry['pipelined'][self.name]['classified_as'] == 'failed'
-
-            # Strehl calculated?
-            _strehl_done = self.db_entry['pipelined'][self.name]['strehl']['status']['done']
-
-            # last_modified == pipe_last_modified?
-            _outdated = abs((self.db_entry['pipelined'][self.name]['strehl']['last_modified'] -
-                             self.db_entry['pipelined'][self.name]['last_modified']).total_seconds()) > 1.0
-
-            # how many times tried?
-            _num_tries = self.db_entry['pipelined'][self.name]['strehl']['status']['retries']
-
-            # print(_pipe_done, _pipe_failed, _preview_done, _outdated)
-            go = (_pipe_done and (not _pipe_failed)) and ((not _strehl_done) or _outdated) \
-                 and (_num_tries <= self.config['misc']['max_retries'])
-
-            return go
-
-        # Run PCA high-contrast processing pipeline?
-        elif part == 'bright_star_pipeline:pca':
-
-            # pipeline done?
-            _pipe_done = self.db_entry['pipelined'][self.name]['status']['done']
-
-            # failed?
-            _pipe_failed = self.db_entry['pipelined'][self.name]['classified_as'] == 'failed'
-
-            # pca done?
-            _pca_done = self.db_entry['pipelined'][self.name]['pca']['status']['done']
-
-            # last_modified == pipe_last_modified?
-            _outdated = abs((self.db_entry['pipelined'][self.name]['pca']['last_modified'] -
-                             self.db_entry['pipelined'][self.name]['last_modified']).total_seconds()) > 1.0
-
-            # how many times tried?
-            _num_tries = self.db_entry['pipelined'][self.name]['pca']['status']['retries']
-
-            # print(_pipe_done, _pipe_failed, _preview_done, _outdated)
-            go = (_pipe_done and (not _pipe_failed)) and ((not _pca_done) or _outdated) \
-                 and (_num_tries <= self.config['misc']['max_retries'])
-
-            return go
-
-        elif part == 'bright_star_pipeline:pca:preview':
-
-            # pipeline done?
-            _pipe_done = self.db_entry['pipelined'][self.name]['status']['done']
-
-            # failed?
-            _pipe_failed = self.db_entry['pipelined'][self.name]['classified_as'] == 'failed'
-
-            # pca done?
-            _pca_done = self.db_entry['pipelined'][self.name]['pca']['status']['done']
-
-            # pca preview done?
-            _pca_preview_done = self.db_entry['pipelined'][self.name]['pca']['preview']['done']
-
-            # last_modified == pipe_last_modified? (or old DB entry)
-            _outdated = 'last_modified' not in self.db_entry['pipelined'][self.name]['pca']['preview'] or \
-                        (abs((self.db_entry['pipelined'][self.name]['pca']['preview']['last_modified'] -
-                             self.db_entry['pipelined'][self.name]['last_modified']).total_seconds()) > 1.0)
-
-            # how many times tried?
-            _num_tries = self.db_entry['pipelined'][self.name]['pca']['preview']['retries']
-
-            go = (_pipe_done and (not _pipe_failed) and _pca_done) and ((not _pca_preview_done) or _outdated) \
-                 and (_num_tries <= self.config['misc']['max_retries'])
-
-            return go
-
-    @staticmethod
-    def init_status():
-        time_now_utc = utc_now()
-        return {
-            'status': {
-                'done': False,
-                'enqueued': False,
-                'force_redo': False,
-                'retries': 0,
-            },
-            'last_modified': time_now_utc,
-            'preview': {
-                'done': False,
-                'force_redo': False,
-                'retries': 0,
-                'last_modified': time_now_utc
-            },
-            'location': [],
-            'classified_as': None,
-
-            'strehl': {
-                'status': {
-                    'force_redo': False,
-                    'enqueued': False,
-                    'done': False,
-                    'retries': 0
-                },
-                'lock_position': None,
-                'ratio_percent': None,
-                'core_arcsec': None,
-                'halo_arcsec': None,
-                'fwhm_arcsec': None,
-                'flag': None,
-                'last_modified': time_now_utc
-            },
-            'pca': {
-                'status': {
-                    'force_redo': False,
-                    'enqueued': False,
-                    'done': False,
-                    'retries': 0
-                },
-                'preview': {
-                    'force_redo': False,
-                    'done': False,
-                    'retries': 0,
-                    'last_modified': time_now_utc
-                },
-                'lock_position': None,
-                'contrast_curve': None,
-                'library_psf_id_corr': None,
-                'last_modified': time_now_utc
-            }
-        }
-
-    def generate_lucky_settings_file(self, out_settings, _path_calib,
-                                     all_files, final_gs_x, final_gs_y, gs_diam,
-                                     final_bg_x, final_bg_y, bg_diam):
-        with open(out_settings, 'w') as f_out_settings:
-            settings_out_n = 0
-            for l in open(self.config['pipeline']['bright_star']['pipeline_settings_template'], 'r'):
-                if l.find("???") == 0:
-                    if settings_out_n == 0:
-                        file_n = 0
-                        for f in all_files:
-                            with fits.open(f) as _tmp:
-                                n_frames = len(_tmp)
-                            f_out_settings.write('{:<7d}{:s}    0-{:d}\n'.format(file_n, f, n_frames - 1))
-                            file_n += 1
-                        settings_out_n += 1
-                    elif settings_out_n == 1:
-                        for file_n, f in enumerate(all_files):
-                            f_out_settings.write('{:<8d}{:<8d}({:d},{:d}),({:d},{:d})\n'
-                                                 .format(file_n, 1,
-                                                         final_gs_x - gs_diam // 2, final_gs_y - gs_diam // 2,
-                                                         final_gs_x + gs_diam // 2, final_gs_y + gs_diam // 2))
-                        settings_out_n += 1
-                    elif settings_out_n == 2:
-                        for file_n, f in enumerate(all_files):
-                            f_out_settings.write('{:<8d}({:d},{:d}),({:d},{:d})\n'
-                                                 .format(file_n,
-                                                         final_bg_x - bg_diam // 2, final_bg_y - bg_diam // 2,
-                                                         final_bg_x + bg_diam // 2, final_bg_y + bg_diam // 2))
-                        settings_out_n += 1
-                    elif settings_out_n == 3:
-                        with fits.open(all_files[0]) as f_fits:
-                            camera_mode = f_fits[0].header['MODE_NUM']
-                            naxis1 = int(f_fits[0].header['NAXIS1'])
-                            if naxis1 == 256:
-                                camera_mode = repr(camera_mode) + '4'
-                            else:
-                                camera_mode = repr(camera_mode)
-                        f_out_settings.write('Bias file (filename/none)                  : ' +
-                                             os.path.join(_path_calib, 'dark_{:s}.fits\n'.format(camera_mode)))
-                        settings_out_n += 1
-                    elif settings_out_n == 4:
-                        f_out_settings.write('Flat (filename/none)                       : ' +
-                                             os.path.join(_path_calib,
-                                                          'flat_{:s}.fits\n'.format(self.db_entry['filter'])))
-                        settings_out_n += 1
-
-                else:
-                    f_out_settings.write(l)
-
-    def generate_preview(self, f_fits, path_obs, path_out):
-        # load first image frame from the fits file
-        preview_img = np.nan_to_num(load_fits(f_fits))
-        # scale with local contrast optimization for preview:
-        preview_img = self.scale_image(preview_img, correction='local')
-        # cropped image [_win=None to try to detect]
-        preview_img_cropped, _x, _y = self.trim_frame(_path=path_obs,
-                                                      _fits_name=os.path.split(f_fits)[1],
-                                                      _win=None, _method='pipeline_settings.txt',
-                                                      _x=None, _y=None, _drizzled=True)
-
-        # Strehl ratio (if available, otherwise will be None)
-        SR = self.db_entry['pipelined'][self.name]['strehl']['ratio_percent']
-
-        # fits_header = get_fits_header(f_fits)
-        fits_header = self.db_entry['fits_header']
-        try:
-            # _pix_x = int(re.search(r'(:)(\d+)',
-            #                        _select['pipelined'][_pipe]['fits_header']['DETSIZE'][0]).group(2))
-            _pix_x = int(re.search(r'(:)(\d+)', fits_header['DETSIZE'][0]).group(2))
-        except KeyError:
-            # this should be there, even if it's sum.fits
-            _pix_x = int(fits_header['NAXIS1'][0])
-
-        self.preview(path_out, self.db_entry['_id'], preview_img, preview_img_cropped,
-                     SR, _fow_x=self.config['telescope'][self.telescope]['fov_x'],
-                     _pix_x=_pix_x, _drizzled=True,
-                     _x=_x, _y=_y)
-
-    def generate_pca_preview(self, _path_out, _preview_img, _cc, _fow_x=36, _pix_x=1024, _drizzled=True):
-        """
-            Generate preview images for the pca pipeline
-
-        :param _path_out:
-        :param _preview_img:
-        :param _cc: contrast curve
-        :param _fow_x: full FoW in arcseconds in the x direction
-        :param _pix_x: original (raw) full frame size in pixels
-        :param _drizzled: drizzle on or off?
-
-        :return:
-        """
-        # import matplotlib
-        # matplotlib.use('Agg')
-        import matplotlib.pyplot as plt
-        _obs = self.db_entry['_id']
-
-        ''' plot psf-subtracted image '''
-        plt.close('all')
-        fig = plt.figure(_obs)
-        fig.set_size_inches(3, 3, forward=False)
-        # ax = fig.add_subplot(111)
-        ax = plt.Axes(fig, [0., 0., 1., 1.])
-        ax.set_axis_off()
-        fig.add_axes(ax)
-        ax.imshow(_preview_img, cmap=plt.cm.magma, origin='lower', interpolation='nearest')
-        # add scale bar:
-        # draw a horizontal bar with length of 0.1*x_size
-        # (ax.transData) with a label underneath.
-        bar_len = _preview_img.shape[0] * 0.1
-        # account for possible drizzling
-        mltplr = 2 if _drizzled else 1
-        bar_len_str = '{:.1f}'.format(bar_len * _fow_x / _pix_x / mltplr)
-        asb = AnchoredSizeBar(ax.transData,
-                              bar_len,
-                              bar_len_str[0] + r"$^{\prime\prime}\!\!\!.$" + bar_len_str[-1],
-                              loc=4, pad=0.3, borderpad=0.5, sep=10, frameon=False)
-        ax.add_artist(asb)
-
-        # save figure
-        fig.savefig(os.path.join(_path_out, _obs + '_pca.png'), dpi=300)
-
-        ''' plot the contrast curve '''
-        # convert cc to numpy array if necessary:
-
-        if not isinstance(_cc, np.ndarray):
-            _cc = np.array(_cc)
-
-        plt.close('all')
-        fig = plt.figure('Contrast curve for {:s}'.format(_obs), figsize=(8, 3.5), dpi=200)
-        ax = fig.add_subplot(111)
-        ax.set_title(_obs)  # , fontsize=14)
-        # ax.plot(_cc[:, 0], -2.5 * np.log10(_cc[:, 1]), 'k-', linewidth=2.5)
-        # _cc[:, 1] is already in mag:
-        ax.plot(_cc[:, 0], _cc[:, 1], 'k-', linewidth=2.5)
-        ax.set_xlim([0.2, 1.45])
-        ax.set_xlabel('Separation [arcseconds]')  # , fontsize=18)
-        ax.set_ylabel('Contrast [$\Delta$mag]')  # , fontsize=18)
-        ax.set_ylim([0, 8])
-        ax.set_ylim(ax.get_ylim()[::-1])
-        ax.grid(linewidth=0.5)
-        plt.tight_layout()
-        fig.savefig(os.path.join(_path_out, _obs + '_contrast_curve.png'), dpi=200)
-
-    def run(self, part=None):
-        """
-            Execute specific part of pipeline.
-            Possible errors are caught and handled by tasks running specific parts of pipeline
-        :return:
-        """
-        # TODO:
-        assert part is not None, 'must specify part to execute'
-
-        # verbose?
-        _v = self.config['pipeline'][self.name]['verbose']
-
-        # UTC date of obs:
-        _date = self.db_entry['date_utc'].strftime('%Y%m%d')
-
-        # path to store unzipped raw files
-        _path_tmp = self.config['path']['path_tmp']
-        # path to raw files:
-        _path_raw = os.path.join(self.db_entry['raw_data']['location'][1], _date)
-        # path to archive:
-        _path_archive = os.path.join(self.config['path']['path_archive'], _date)
-        # path to calibration data produced by lucky pipeline:
-        _path_calib = os.path.join(self.config['path']['path_archive'], _date, 'calib')
-
-        if part == 'bright_star_pipeline':
-            # make sure to increment number of tries
-            self.db_entry['pipelined'][self.name]['status']['retries'] += 1
-            # steps from reduce_data_multithread.py + image_reconstruction.cpp
-
-            # raw files:
-            _raws_zipped = sorted(self.db_entry['raw_data']['data'])
-
-            # unbzip raw source file(s):
-            lbunzip2(_path_in=_path_raw, _files=_raws_zipped, _path_out=_path_tmp, _keep=True)
-
-            # unzipped file names:
-            raws = [os.path.join(_path_tmp, os.path.splitext(_f)[0]) for _f in _raws_zipped]
-
-            ''' go off with processing '''
-            bg_diam = 50
-            gs_diam = 50
-
-            base_val = 0
-
-            files_to_analyse = []
-            for f in sorted(raws):
-                # try:
-                if (len(f.split(".")) < 2 and f.split(".")[0] != '_') or f.split(".")[-2][-2] != '_':
-                    orig_f = f
-                    with fits.open(f) as p:
-                        # sometimes the first file output is actually the smallest in number of frames
-                        if len(p) < 50:
-                            new_fn = f.rsplit(".", 1)[-2] + '_0.fits'
-                            if os.path.exists(new_fn):
-                                f = new_fn
-                        # fs = f.split("/")[-1]
-                        files_to_analyse.append([f, orig_f])
-                # except Exception as _e:
-                #     print(_e)
-                #     print("Failed to process", f)
-
-            for fn, orig_fn in sorted(files_to_analyse)[:1]:
-                # print('_____________________')
-                # print(files_to_analyse)
-                if _v:
-                    print("Analysing", orig_fn)
-                # make a directory to store this run
-                out_dir = os.path.join(_path_archive, self.db_entry['_id'], self.name)
-                if not os.path.exists(out_dir):
-                    os.makedirs(out_dir)
-
-                # first make a preview sum image
-                with fits.open(fn) as p:
-                    img_size = p[0].data.shape
-
-                    # make 5 frames and median combine them to avoid selecting cosmic rays as the guide star
-                    if _v:
-                        print("Getting initial frame average")
-                    avg_imgs = np.zeros((5, img_size[0], img_size[1]))
-
-                    for avg_n in range(0, 5):
-                        n_avg_frames = 0.0
-                        for frame_n in list(range(avg_n, len(p), 5))[::4]:
-                            avg_imgs[avg_n] += p[frame_n].data + base_val
-                            n_avg_frames += 1.0
-                        avg_imgs[avg_n] /= n_avg_frames
-
-                    avg_img = np.median(avg_imgs, axis=0)
-                    export_fits(os.path.join(out_dir, 'sum.fits'), avg_img)
-
-                    mid_portion = avg_img[30:avg_img.shape[0] - 30, 30:avg_img.shape[1] - 30]
-
-                    # if there's a NaN something's gone horribly wrong
-                    if np.sum(mid_portion) != np.sum(mid_portion):
-                        classified_as = 'failed'
-                        self.db_entry['pipelined'][self.name]['classified_as'] = classified_as
-                        raise RuntimeError('Something went horribly wrong')
-
-                    if _v:
-                        print(mid_portion.shape)
-
-                    mid_portion = ndimage.gaussian_filter(mid_portion, sigma=10)
-
-                    # subtract off a much more smoothed version to remove large-scale gradients across the image
-                    mid_portion -= ndimage.gaussian_filter(mid_portion, sigma=60)
-
-                    mid_portion = mid_portion[30:mid_portion.shape[0] - 30, 30:mid_portion.shape[1] - 30]
-
-                    # pyfits.PrimaryHDU(mid_portion).writeto("filtered_img.fits",clobber=True)
-
-                    final_gs_y, final_gs_x = np.unravel_index(mid_portion.argmax(), mid_portion.shape)
-                    final_gs_y += 60
-                    final_gs_x += 60
-                    if _v:
-                        print("\tGuide star selected at:", final_gs_x, final_gs_y)
-
-                    # now guess the background region
-                    final_bg_x = final_gs_x + gs_diam
-                    final_bg_y = final_gs_y + gs_diam
-
-                    if final_bg_x > mid_portion.shape[1]:
-                        final_bg_x = mid_portion.shape[1]
-                    if final_bg_y > mid_portion.shape[0]:
-                        final_bg_y = mid_portion.shape[0]
-
-                    if _v:
-                        print("\tGenerating S&A image")
-
-                    # now do a really simple S&A preview, using the selected guide star
-                    # also track the SNR of the star to get an estimate for the
-                    # imaging performance
-                    with open(os.path.join(out_dir, 'quicklook_stats.txt'), 'w') as stats_out:
-
-                        snrs = []
-                        output_image = np.zeros((img_size[0] * 2, img_size[1] * 2))
-                        for frame_n in range(0, len(p), 3):
-                            if frame_n % 9 == 0:
-                                # print("\r\t", frame_n, "/", len(p))
-                                # sys.stdout.flush()
-                                pass
-
-                            gs_region = p[frame_n].data[final_gs_y - gs_diam // 2: final_gs_y + gs_diam // 2,
-                                        final_gs_x - gs_diam // 2: final_gs_x + gs_diam // 2] + base_val
-                            gs_region = gs_region.astype(float)
-
-                            # using the BG region as an estimate of the background noise
-                            bg_region = p[frame_n].data[final_bg_y - gs_diam // 4: final_bg_y + gs_diam // 4,
-                                        final_bg_x - gs_diam // 4:final_bg_x + gs_diam // 4]
-                            bg_rms = np.std(bg_region)
-                            bg_base = np.average(bg_region)
-
-                            blurred_version = ndimage.gaussian_filter(gs_region, sigma=1)
-
-                            max_posn = np.unravel_index(blurred_version.argmax(), blurred_version.shape)
-                            max_posn_y = max_posn[0] + final_gs_y - gs_diam // 2
-                            max_posn_x = max_posn[1] + final_gs_x - gs_diam // 2
-
-                            # region around guide star, to include PSF-convolution
-                            signal = np.sum(
-                                gs_region[max_posn[0] - 2: max_posn[0] + 3, max_posn[1] - 2: max_posn[1] + 3] - bg_base)
-
-                            snrs.append(signal / bg_rms)
-
-                            stats_out.write('{:d} {:f} {:f} {:f} {:f} {:f}\n'.format(frame_n, signal / bg_rms,
-                                                                                     signal, bg_rms, bg_base,
-                                                    np.sum(gs_region[max_posn[0] - 2 - 20:max_posn[0] + 3 - 20,
-                                                           max_posn[1] - 2 - 20:max_posn[1] + 3 - 20] - bg_base)))
-
-                            dx = final_gs_x - max_posn_x
-                            dy = final_gs_y - max_posn_y
-
-                            out_start_x = img_size[1] // 2 + dx
-                            out_start_y = img_size[0] // 2 + dy
-
-                            if (0 < out_start_x < img_size[1]) and (0 < out_start_y < img_size[0]):
-                                output_image[out_start_y:out_start_y + img_size[0],
-                                             out_start_x:out_start_x + img_size[1]] += p[frame_n].data + base_val
-                        output_image = output_image[20 + img_size[1] // 2: (img_size[1] * 3) // 2 - 20,
-                                       20 + img_size[0] // 2: (img_size[0] * 3) // 2 - 20]
-                        export_fits(os.path.join(out_dir, self.db_entry['_id'] + '_preview_saa.fits'), output_image)
-
-                    valid_snrs = []
-                    for s in snrs:
-                        if 0.0 < s < 1.0e8:
-                            valid_snrs.append(s)
-                    valid_snrs = sigma_clip(valid_snrs, 3, 2)
-                    snr = np.average(valid_snrs)
-                    if _v:
-                        print("\tSNR: {:.1f}".format(snr))
-
-                    if _v:
-                        print("\tGenerating lucky settings file")
-                    # first find all the files for this target
-                    extra_files = glob.glob(fn.rsplit(".", 1)[0] + "_?.fits")
-                    all_files = [fn]
-                    for e in extra_files:
-                        all_files.append(e)
-
-                    self.generate_lucky_settings_file(os.path.join(out_dir, 'pipeline_settings.txt'), _path_calib,
-                                                      all_files, final_gs_x, final_gs_y, gs_diam,
-                                                      final_bg_x, final_bg_y, bg_diam)
-
-                    if snr < 20.0 or len(snrs) < 20:
-                        classified_as = 'zero_flux'
-                    elif snr < 100.0:
-                        classified_as = 'faint'
-                    else:
-                        classified_as = 'high_flux'
-                    self.db_entry['pipelined'][self.name]['classified_as'] = classified_as
-
-                    # run c++ code
-                    try:
-                        subprocess.run(['{:s} pipeline_settings.txt'.format(
-                            self.config['pipeline'][self.name]['pipeline_executable'])],
-                            check=True, shell=True, cwd=out_dir)
-                    except Exception as _e:
-                        print(_e)
-
-                    # reduction successful? prepare db entry for update
-                    f100p = os.path.join(out_dir, '100p.fits')
-                    if os.path.exists(f100p):
-                        self.db_entry['pipelined'][self.name]['status']['done'] = True
-                        self.db_entry['pipelined'][self.name]['location'] = out_dir
-                    else:
-                        self.db_entry['pipelined'][self.name]['status']['done'] = False
-                    self.db_entry['pipelined'][self.name]['status']['enqueued'] = False
-                    self.db_entry['pipelined'][self.name]['status']['force_redo'] = False
-                    # self.db_entry['pipelined'][self.name]['status']['retries'] += 1
-
-                    # set last_modified as 100p.fits modified date:
-                    if os.path.exists(f100p):
-                        time_tag = datetime.datetime.utcfromtimestamp(os.stat(os.path.join(out_dir,
-                                                                                           '100p.fits')).st_mtime)
-                    else:
-                        time_tag = utc_now()
-                    self.db_entry['pipelined'][self.name]['last_modified'] = time_tag
-
-                for _file in raws:
-                    if _v:
-                        print('removing', _file)
-                    try:
-                        os.remove(os.path.join(_file))
-                    except Exception as _e:
-                        print(_e)
-
-        elif part == 'bright_star_pipeline:preview':
-            # generate previews
-            path_obs = os.path.join(_path_archive, self.db_entry['_id'], self.name)
-            f_fits = os.path.join(path_obs, '100p.fits')
-            path_out = os.path.join(path_obs, 'preview')
-            self.generate_preview(f_fits=f_fits, path_obs=path_obs, path_out=path_out)
-
-            # prepare to update db entry:
-            self.db_entry['pipelined'][self.name]['preview']['done'] = True
-            self.db_entry['pipelined'][self.name]['preview']['force_redo'] = False
-            self.db_entry['pipelined'][self.name]['preview']['retries'] += 1
-            self.db_entry['pipelined'][self.name]['preview']['last_modified'] = \
-                self.db_entry['pipelined'][self.name]['last_modified']
-
-        elif part == 'bright_star_pipeline:strehl':
-            # compute strehl
-            path_obs = os.path.join(_path_archive, self.db_entry['_id'], self.name)
-            f_fits = '100p.fits'
-            path_out = os.path.join(path_obs, 'strehl')
-            _win = self.config['pipeline'][self.name]['strehl']['win']
-            _drizzled = True
-            _method = 'pipeline_settings.txt'
-            _plate_scale = self.config['telescope'][self.telescope]['scale_red']
-            _Strehl_factor = self.config['telescope'][self.telescope]['Strehl_factor'][self.db_entry['filter']]
-            _core_min = self.config['pipeline'][self.name]['strehl']['core_min']
-            _halo_max = self.config['pipeline'][self.name]['strehl']['halo_max']
-
-            img, x, y = self.trim_frame(path_obs, _fits_name=f_fits,
-                                        _win=_win, _method=_method,
-                                        _drizzled=_drizzled)
-            core, halo = self.bad_obs_check(img, ps=_plate_scale)
-
-            boxsize = int(round(3. / _plate_scale))
-            SR, FWHM, box = self.Strehl_calculator(img, _Strehl_factor[0], _plate_scale, boxsize)
-
-            if core >= _core_min and halo <= _halo_max:
-                flag = 'OK'
-            else:
-                flag = 'BAD?'
-
-            # print(core, halo, SR*100, FWHM)
-
-            # dump results to disk
-            if not (os.path.exists(path_out)):
-                os.makedirs(path_out)
-
-            # save box around selected object:
-            hdu = fits.PrimaryHDU(box)
-            hdu.writeto(os.path.join(path_out, '{:s}_box.fits'.format(self.db_entry['_id'])), overwrite=True)
-
-            # save the Strehl data to txt-file:
-            with open(os.path.join(path_out, '{:s}_strehl.txt'.format(self.db_entry['_id'])), 'w') as _f:
-                _f.write('# lock_x[px] lock_y[px] core["] halo["] SR[%] FWHM["] flag\n')
-                output_entry = '{:d} {:d} {:.5f} {:.5f} {:.5f} {:.5f} {:s}\n'. \
-                    format(x, y, core, halo, SR * 100, FWHM, flag)
-                _f.write(output_entry)
-
-            # reduction successful? prepare db entry for update
-            self.db_entry['pipelined'][self.name]['strehl']['status']['done'] = True
-            # make sure to (re)make preview with imprinted Strehl:
-            self.db_entry['pipelined'][self.name]['preview']['done'] = False
-            self.db_entry['pipelined'][self.name]['strehl']['status']['enqueued'] = False
-            self.db_entry['pipelined'][self.name]['strehl']['status']['force_redo'] = False
-            self.db_entry['pipelined'][self.name]['strehl']['status']['retries'] += 1
-            # set last_modified as for the pipe itself:
-            self.db_entry['pipelined'][self.name]['strehl']['last_modified'] = \
-                self.db_entry['pipelined'][self.name]['last_modified']
-
-            self.db_entry['pipelined'][self.name]['strehl']['lock_position'] = [x, y]
-            self.db_entry['pipelined'][self.name]['strehl']['ratio_percent'] = SR*100
-            self.db_entry['pipelined'][self.name]['strehl']['core_arcsec'] = core
-            self.db_entry['pipelined'][self.name]['strehl']['halo_arcsec'] = halo
-            self.db_entry['pipelined'][self.name]['strehl']['fwhm_arcsec'] = FWHM
-            self.db_entry['pipelined'][self.name]['strehl']['flag'] = flag
-
-        elif part == 'bright_star_pipeline:pca':
-            # run high-contrast pipeline
-            print('running PCA pipeline for {:s}'.format(self.db_entry['_id']))
-            with fits.open(self.config['pipeline'][self.name]['high_contrast']['path_psf_reference_library']) as _lib:
-                _library = _lib[0].data
-                _library_names_short = _lib[-1].data['obj_names']
-                _library_ids = _lib[-1].data['obs_names']
-
-            _win = self.config['pipeline'][self.name]['high_contrast']['win']
-            _sigma = self.config['pipeline'][self.name]['high_contrast']['sigma']
-            _nrefs = self.config['pipeline'][self.name]['high_contrast']['nrefs']
-            _klip = self.config['pipeline'][self.name]['high_contrast']['klip']
-
-            _plate_scale = self.config['telescope'][self.telescope]['scale_red']
-
-            path_obs = os.path.join(_path_archive, self.db_entry['_id'], self.name)
-            f_fits = '100p.fits'
-            path_out = os.path.join(path_obs, 'pca')
-            _method = 'pipeline_settings.txt'
-            _drizzled = True
-
-            _trimmed_frame, x_lock, y_lock = self.trim_frame(path_obs, _fits_name=f_fits,
-                                                             _win=_win, _method=_method,
-                                                             _x=None, _y=None, _drizzled=_drizzled)
-            print(x_lock, y_lock)
-
-            # Filter the trimmed frame with IUWT filter, 2 coeffs
-            filtered_frame = (vip.var.cube_filter_iuwt(
-                np.reshape(_trimmed_frame, (1, np.shape(_trimmed_frame)[0], np.shape(_trimmed_frame)[1])),
-                coeff=5, rel_coeff=2))
-            print(filtered_frame.shape)
-
-            _fit = vip.var.fit_2dgaussian(filtered_frame[0], crop=True, cropsize=50,
-                                          debug=False, full_output=True)
-
-            # mean_y = float(_fit['centroid_y'])
-            # mean_x = float(_fit['centroid_x'])
-            fwhm_y = float(_fit['fwhm_y'])
-            fwhm_x = float(_fit['fwhm_x'])
-            # amplitude = float(_fit['amplitude'])
-            # theta = float(_fit['theta'])
-
-            _fwhm = np.mean([fwhm_y, fwhm_x])
-
-            # Print the resolution element size
-            # print('Using resolution element size = ', _fwhm)
-            if _fwhm < 2:
-                _fwhm = 2.0
-                # print('Too small, changing to ', _fwhm)
-            _fwhm = int(_fwhm)
-
-            # Center the filtered frame
-            centered_cube, shy, shx = \
-                (vip.preproc.cube_recenter_gauss2d_fit(array=filtered_frame, xy=(_win, _win), fwhm=_fwhm,
-                                                       subi_size=6, nproc=1, full_output=True))
-
-            centered_frame = centered_cube[0]
-
-            if shy > 5 or shx > 5:
-                raise TypeError('Centering failed: pixel shifts too big')
-
-            # Do aperture photometry on the central star
-            center_aperture = photutils.CircularAperture(
-                (int(len(centered_frame) / 2), int(len(centered_frame) / 2)), _fwhm / 2.0)
-            center_flux = photutils.aperture_photometry(centered_frame, center_aperture)['aperture_sum'][0]
-
-            # Make PSF template for calculating PCA throughput
-            psf_template = (
-                centered_frame[len(centered_frame) // 2 - 3 * _fwhm:len(centered_frame) // 2 + 3 * _fwhm,
-                len(centered_frame) // 2 - 3 * _fwhm:len(centered_frame) // 2 + 3 * _fwhm])
-
-            # Choose reference frames via cross correlation
-            # source short name:
-            _sou_name = self.db_entry['name']
-            # make sure not to use any observations of the source:
-            library_notmystar = _library[~np.in1d(_library_names_short, _sou_name)]
-            library_ids_notmystar = _library_ids[~np.in1d(_library_names_short, _sou_name)]
-            cross_corr = np.zeros(len(library_notmystar))
-            flattened_frame = np.ndarray.flatten(centered_frame)
-
-            for c in range(len(library_notmystar)):
-                cross_corr[c] = stats.pearsonr(flattened_frame,
-                                               np.ndarray.flatten(library_notmystar[c, :, :]))[0]
-
-            index_sorted = np.argsort(cross_corr)[::-1]
-            cross_corr_sorted = sorted(cross_corr)[::-1]
-            library = library_notmystar[index_sorted[0:int(_nrefs)], :, :]
-            library_ids = library_ids_notmystar[index_sorted[0:int(_nrefs)]]
-            library_psf_id_corr = {_nn: _cc for _nn, _cc in zip(library_ids, cross_corr_sorted[0:int(_nrefs)])}
-            print('Library correlations:\n', library_psf_id_corr)
-
-            # Do PCA
-            reshaped_frame = np.reshape(centered_frame, (1, centered_frame.shape[0], centered_frame.shape[1]))
-            pca_frame = vip.pca.pca(cube=reshaped_frame, angle_list=np.zeros(1),
-                                    cube_ref=library, ncomp=_klip, verbose=True)
-
-            pca_file_name = os.path.join(path_out, self.db_entry['_id'] + '_pca.fits')
-            print(pca_file_name)
-
-            # dump results to disk
-            if not (os.path.exists(path_out)):
-                os.makedirs(path_out)
-
-            # save fits after PCA
-            hdu = fits.PrimaryHDU(pca_frame)
-            hdulist = fits.HDUList([hdu])
-            hdulist.writeto(pca_file_name, clobber=True)
-
-            # Make contrast curve
-            datafr = (vip.phot.contrcurve.contrast_curve(cube=reshaped_frame, angle_list=np.zeros(1),
-                                                         psf_template=psf_template,
-                                                         cube_ref=library, fwhm=_fwhm,
-                                                         pxscale=_plate_scale,
-                                                         starphot=center_flux, sigma=_sigma,
-                                                         ncomp=_klip, algo=vip.pca.pca,
-                                                         debug=False, plot=False, nbranch=3, scaling=None,
-                                                         mask_center_px=_fwhm, fc_rad_sep=6,
-                                                         imlib='ndimage-fourier'))
-            # con = datafr['sensitivity (Gauss)']
-            cont = datafr['sensitivity (Student)']
-            sep = datafr['distance']
-
-            # save txt for nightly median calc/plot
-            with open(os.path.join(path_out, self.db_entry['_id'] + '_contrast_curve.txt'), 'w') as f:
-                f.write('# lock position: {:d} {:d}\n'.format(x_lock, y_lock))
-                for _s, dm in zip(sep * _plate_scale, -2.5 * np.log10(cont)):
-                    f.write('{:.3f} {:.3f}\n'.format(_s, dm))
-
-            # reduction successful? prepare db entry for update
-            self.db_entry['pipelined'][self.name]['pca']['status']['done'] = True
-            self.db_entry['pipelined'][self.name]['pca']['status']['enqueued'] = False
-            self.db_entry['pipelined'][self.name]['pca']['status']['force_redo'] = False
-            self.db_entry['pipelined'][self.name]['pca']['status']['retries'] += 1
-            # set last_modified as for the pipe itself:
-            self.db_entry['pipelined'][self.name]['pca']['last_modified'] = \
-                self.db_entry['pipelined'][self.name]['last_modified']
-
-            self.db_entry['pipelined'][self.name]['pca']['lock_position'] = [x_lock, y_lock]
-            self.db_entry['pipelined'][self.name]['pca']['contrast_curve'] = list(zip(sep * _plate_scale,
-                                                                                      -2.5 * np.log10(cont)))
-            self.db_entry['pipelined'][self.name]['pca']['library_psf_id_corr'] = library_psf_id_corr
-
-        elif part == 'bright_star_pipeline:pca:preview':
-            # generate previews for high-contrast pipeline
-            path_obs = os.path.join(_path_archive, self.db_entry['_id'], self.name)
-            path_out = os.path.join(path_obs, 'pca')
-            _drizzled = True
-
-            # what's in a fits name?
-            f_fits = os.path.join(path_out, '{:s}_pca.fits'.format(self.db_entry['_id']))
-
-            # load first image frame from the fits file
-            _preview_img = load_fits(f_fits)
-            # scale with local contrast optimization for preview:
-            _preview_img = self.scale_image(_preview_img, correction='local')
-
-            # contrast_curve:
-            _cc = self.db_entry['pipelined'][self.name]['pca']['contrast_curve']
-
-            # number of pixels in X on the detector
-            try:
-                _pix_x = int(re.search(r'(:)(\d+)', self.db_entry['fits_header']['DETSIZE'][0]).group(2))
-            except KeyError:
-                # this should be there, even if it's sum.fits
-                _pix_x = int(self.db_entry['fits_header']['NAXIS1'][0])
-
-            self.generate_pca_preview(path_out, _preview_img=_preview_img, _cc=_cc,
-                                      _fow_x=self.config['telescope'][self.telescope]['fov_x'], _pix_x=_pix_x,
-                                      _drizzled=_drizzled)
-
-            # success? prepare to update db entry:
-            self.db_entry['pipelined'][self.name]['pca']['preview']['done'] = True
-            self.db_entry['pipelined'][self.name]['pca']['preview']['force_redo'] = False
-            self.db_entry['pipelined'][self.name]['pca']['preview']['retries'] += 1
-            self.db_entry['pipelined'][self.name]['pca']['preview']['last_modified'] = \
-                self.db_entry['pipelined'][self.name]['last_modified']
-
-        else:
-            raise RuntimeError('unknown pipeline part')
-
-
-def job_bright_star_pipeline(_id=None, _config=None, _db_entry=None, _task_hash=None):
-    try:
-        # init pipe here again. [as it's not JSON serializable]
-        pip = RoboaoBrightStarPipeline(_config=_config, _db_entry=_db_entry)
-        # run the pipeline
-        pip.run(part='bright_star_pipeline')
-
-        return {'_id': _id, 'job': 'bright_star_pipeline', 'hash': _task_hash,
-                'status': 'ok', 'message': str(datetime.datetime.now()),
-                'db_record_update': ({'_id': _id},
-                                     {'$set': {
-                                         'pipelined.bright_star': pip.db_entry['pipelined']['bright_star']
-                                     }}
-                                     )
-                }
-    except Exception as _e:
-        traceback.print_exc()
-        try:
-            _status = _db_entry['pipelined']['bright_star']
-        except Exception as _ee:
-            print(str(_ee))
-            traceback.print_exc()
-            # failed? flush status:
-            _status = RoboaoBrightStarPipeline.init_status()
-        # retries++
-        _status['status']['retries'] += 1
-        _status['status']['enqueued'] = False
-        _status['status']['force_redo'] = False
-        _status['status']['done'] = False
-        _status['last_modified'] = utc_now()
-        return {'_id': _id, 'job': 'bright_star_pipeline', 'hash': _task_hash,
-                'status': 'error', 'message': str(_e),
-                'db_record_update': ({'_id': _id},
-                                     {'$set': {
-                                         'pipelined.bright_star': _status
-                                     }}
-                                     )
-                }
-
-
-def job_bright_star_pipeline_preview(_id=None, _config=None, _db_entry=None, _task_hash=None):
-    try:
-        # init pipe here again. [as it's not JSON serializable]
-        pip = RoboaoBrightStarPipeline(_config=_config, _db_entry=_db_entry)
-        pip.run(part='bright_star_pipeline:preview')
-
-        return {'_id': _id, 'job': 'bright_star_pipeline:preview', 'hash': _task_hash,
-                'status': 'ok', 'message': str(datetime.datetime.now()),
-                'db_record_update': ({'_id': _id},
-                                     {'$set': {
-                                         'pipelined.bright_star.preview':
-                                             pip.db_entry['pipelined']['bright_star']['preview']
-                                     }}
-                                     )
-                }
-    except Exception as _e:
-        traceback.print_exc()
-        try:
-            _status = _db_entry['pipelined']['bright_star']
-        except Exception as _ee:
-            print(str(_ee))
-            traceback.print_exc()
-            # failed? flush status:
-            _status = RoboaoBrightStarPipeline.init_status()
-        # retries++
-        _status['preview']['retries'] += 1
-        _status['preview']['done'] = False
-        _status['preview']['force_redo'] = False
-        _status['preview']['last_modified'] = utc_now()
-        return {'_id': _id, 'job': 'bright_star_pipeline:preview', 'hash': _task_hash,
-                'status': 'error', 'message': str(_e),
-                'db_record_update': ({'_id': _id},
-                                     {'$set': {
-                                         'pipelined.bright_star.preview': _status['preview']
-                                     }}
-                                     )
-                }
-
-
-def job_bright_star_pipeline_strehl(_id=None, _config=None, _db_entry=None, _task_hash=None):
-    try:
-        # init pipe here again. [as it's not JSON serializable]
-        pip = RoboaoBrightStarPipeline(_config=_config, _db_entry=_db_entry)
-        pip.run(part='bright_star_pipeline:strehl')
-
-        return {'_id': _id, 'job': 'bright_star_pipeline:strehl', 'hash': _task_hash,
-                'status': 'ok', 'message': str(datetime.datetime.now()),
-                'db_record_update': ({'_id': _id},
-                                     {'$set': {
-                                         'pipelined.bright_star.strehl':
-                                             pip.db_entry['pipelined']['bright_star']['strehl']
-                                     }}
-                                     )
-                }
-    except Exception as _e:
-        traceback.print_exc()
-        try:
-            _retries = _db_entry['pipelined']['bright_star']['strehl']['status']['retries']
-        except Exception as _ee:
-            print(str(_ee))
-            traceback.print_exc()
-            # failed? something must have gone terribly wrong
-            _retries = 100
-        # flush status:
-        _status = RoboaoBrightStarPipeline.init_status()
-        # retries++
-        _status['strehl']['status']['retries'] = _retries + 1
-        _status['strehl']['last_modified'] = utc_now()
-        return {'_id': _id, 'job': 'bright_star_pipeline:strehl', 'hash': _task_hash,
-                'status': 'error', 'message': str(_e),
-                'db_record_update': ({'_id': _id},
-                                     {'$set': {
-                                         'pipelined.bright_star.strehl': _status['strehl']
-                                     }}
-                                     )
-                }
-
-
-def job_bright_star_pipeline_pca(_id=None, _config=None, _db_entry=None, _task_hash=None):
-    try:
-        # init pipe here again. [as it's not JSON serializable]
-        pip = RoboaoBrightStarPipeline(_config=_config, _db_entry=_db_entry)
-        pip.run(part='bright_star_pipeline:pca')
-
-        return {'_id': _id, 'job': 'bright_star_pipeline:pca', 'hash': _task_hash,
-                'status': 'ok', 'message': str(datetime.datetime.now()),
-                'db_record_update': ({'_id': _id},
-                                     {'$set': {
-                                         'pipelined.bright_star.pca': pip.db_entry['pipelined']['bright_star']['pca']
-                                     }}
-                                     )
-                }
-    except Exception as _e:
-        traceback.print_exc()
-        try:
-            _retries = _db_entry['pipelined']['bright_star']['pca']['status']['retries']
-        except Exception as _ee:
-            print(str(_ee))
-            traceback.print_exc()
-            # failed? something must have gone terribly wrong
-            _retries = 100
-        # flush status:
-        _status = RoboaoBrightStarPipeline.init_status()
-        # retries++
-        _status['pca']['status']['retries'] = _retries + 1
-        _status['pca']['last_modified'] = utc_now()
-        return {'_id': _id, 'job': 'bright_star_pipeline:pca', 'hash': _task_hash,
-                'status': 'error', 'message': str(_e),
-                'db_record_update': ({'_id': _id},
-                                     {'$set': {
-                                         'pipelined.bright_star.pca': _status['pca']
-                                     }}
-                                     )
-                }
-
-
-def job_bright_star_pipeline_pca_preview(_id=None, _config=None, _db_entry=None, _task_hash=None):
-    try:
-        # init pipe here again. [as it's not JSON serializable]
-        pip = RoboaoBrightStarPipeline(_config=_config, _db_entry=_db_entry)
-        pip.run(part='bright_star_pipeline:pca:preview')
-
-        return {'_id': _id, 'job': 'bright_star_pipeline:pca:preview', 'hash': _task_hash,
-                'status': 'ok', 'message': str(datetime.datetime.now()),
-                'db_record_update': ({'_id': _id},
-                                     {'$set': {
-                                         'pipelined.bright_star.pca.preview':
-                                             pip.db_entry['pipelined']['bright_star']['pca']['preview']
-                                     }}
-                                     )
-                }
-    except Exception as _e:
-        traceback.print_exc()
-        try:
-            _status = _db_entry['pipelined']['bright_star']
-        except Exception as _ee:
-            print(str(_ee))
-            traceback.print_exc()
-            # failed? flush status:
-            _status = RoboaoBrightStarPipeline.init_status()
-        # retries++
-        _status['pca']['preview']['retries'] += 1
-        _status['pca']['preview']['done'] = False
-        _status['pca']['preview']['force_redo'] = False
-        _status['pca']['preview']['last_modified'] = utc_now()
-        return {'_id': _id, 'job': 'bright_star_pipeline:pca:preview', 'hash': _task_hash,
-                'status': 'error', 'message': str(_e),
-                'db_record_update': ({'_id': _id},
-                                     {'$set': {
-                                         'pipelined.bright_star.pca.preview': _status['pca']['preview']
-                                     }}
-                                     )
-                }
-
-
-class RoboaoFaintStarPipeline(RoboaoPipeline):
-    """
-        Robo-AO's Bright Star Pipeline
-    """
-    def __init__(self, _config, _db_entry):
-        """
-            Init Robo-AO's Bright Star Pipeline
-            :param _config: dict with configuration
-            :param _db_entry: observation DB entry
-        """
-        ''' initialize super class '''
-        super(RoboaoFaintStarPipeline, self).__init__(_config=_config, _db_entry=_db_entry)
-
-        # pipeline name. This goes to 'pipelined' field of obs DB entry
-        self.name = 'faint_star'
-
-        # initialize status
-        if self.name not in self.db_entry['pipelined']:
-            self.db_entry['pipelined'][self.name] = self.init_status()
-
-    def check_necessary_conditions(self):
-        """
-            Check if should be run on an obs (if necessary conditions are met)
-            :param _db_entry: observation DB entry
-        :return:
-        """
-        go = True
-
-        if 'go' in self.config['pipeline'][self.name]:
-            for field_name, field_condition in self.config['pipeline'][self.name]['go'].items():
-                if field_name != 'help':
-                    # build proper dict reference expression
-                    keys = field_name.split('.')
-                    expr = 'self.db_entry'
-                    for key in keys:
-                        expr += "['{:s}']".format(key)
-                    # get condition
-                    condition = eval(expr + ' ' + field_condition)
-                    # eval condition
-                    go = go and condition
-
-        return go
-
-    def check_conditions(self, part=None):
-        """
-            Perform condition checks for running specific parts of pipeline
-            :param part: which part of pipeline to run
-        :return:
-        """
-        assert part is not None, 'must specify what to check'
-
-        # check the FSP itself?
-        if part == 'faint_star_pipeline':
-
-            # BSP checks are done to avoid uncompressing bzipped files multiple times
-            # BSP no go?
-            _bsp_no_go = 'bright_star' not in self.db_entry['pipelined']
-            # BSP go and done?
-            _bsp_go_and_done = ('bright_star' in self.db_entry['pipelined']) and \
-               self.db_entry['pipelined']['bright_star']['status']['done']
-            # BSP done and not failed/zero flux? don't want to waste computational resources on such
-            _bsp_not_failed = _bsp_go_and_done and \
-              (self.db_entry['pipelined']['bright_star']['classified_as'] not in ('failed', 'zero_flux'))
+        # check the RP itself?
+        if part == 'registration_pipeline':
 
             # force redo requested?
             _force_redo = self.db_entry['pipelined'][self.name]['status']['force_redo']
@@ -4956,13 +3289,12 @@ class RoboaoFaintStarPipeline(RoboaoPipeline):
             # how many times tried?
             _num_tries = self.db_entry['pipelined'][self.name]['status']['retries']
 
-            go = (_bsp_no_go or (_bsp_go_and_done and _bsp_not_failed)) and \
-                 (_force_redo or ((not _done) and (_num_tries <= self.config['misc']['max_retries'])))
+            go = (_force_redo or ((not _done) and (_num_tries <= self.config['misc']['max_retries'])))
 
             return go
 
-        # Preview generation for the results of FSP processing?
-        elif part == 'faint_star_pipeline:preview':
+        # Preview generation for the results of RP processing?
+        elif part == 'registration_pipeline:preview':
 
             # pipeline done?
             _pipe_done = self.db_entry['pipelined'][self.name]['status']['done']
@@ -4972,7 +3304,7 @@ class RoboaoFaintStarPipeline(RoboaoPipeline):
 
             # last_modified == pipe_last_modified?
             _outdated = abs((self.db_entry['pipelined'][self.name]['preview']['last_modified'] -
-                             self.db_entry['pipelined'][self.name]['last_modified']).total_seconds()) > 1.0
+                             self.db_entry['pipelined'][self.name]['last_modified']).total_seconds()) > 5.0
 
             # how many times tried?
             _num_tries = self.db_entry['pipelined'][self.name]['preview']['retries']
@@ -4981,79 +3313,6 @@ class RoboaoFaintStarPipeline(RoboaoPipeline):
                  and (_num_tries <= self.config['misc']['max_retries'])
 
             return go
-
-        # Strehl calculation for the results of FSP processing?
-        elif part == 'faint_star_pipeline:strehl':
-
-            # # pipeline done?
-            # _pipe_done = self.db_entry['pipelined'][self.name]['status']['done']
-            #
-            # # failed?
-            # _pipe_failed = self.db_entry['pipelined'][self.name]['classified_as'] == 'failed'
-            #
-            # # Strehl calculated?
-            # _strehl_done = self.db_entry['pipelined'][self.name]['strehl']['status']['done']
-            #
-            # # last_modified == pipe_last_modified?
-            # _outdated = abs((self.db_entry['pipelined'][self.name]['strehl']['last_modified'] -
-            #                  self.db_entry['pipelined'][self.name]['last_modified']).total_seconds()) > 1.0
-            # # how many times tried?
-            # _num_tries = self.db_entry['pipelined'][self.name]['strehl']['status']['retries']
-            #
-            # # print(_pipe_done, _pipe_failed, _preview_done, _outdated)
-            # go = (_pipe_done and (not _pipe_failed)) and ((not _strehl_done) or _outdated) \
-            #      and (_num_tries <= self.config['misc']['max_retries'])
-            #
-            # return go
-            return False
-
-        # Run PCA high-contrast processing pipeline?
-        elif part == 'faint_star_pipeline:pca':
-
-            # # pipeline done?
-            # _pipe_done = self.db_entry['pipelined'][self.name]['status']['done']
-            #
-            # # failed?
-            # _pipe_failed = self.db_entry['pipelined'][self.name]['classified_as'] == 'failed'
-            #
-            # # pca done?
-            # _pca_done = self.db_entry['pipelined'][self.name]['pca']['status']['done']
-            #
-            # # last_modified == pipe_last_modified?
-            # _outdated = abs((self.db_entry['pipelined'][self.name]['pca']['last_modified'] -
-            #                  self.db_entry['pipelined'][self.name]['last_modified']).total_seconds()) > 1.0
-            # # how many times tried?
-            # _num_tries = self.db_entry['pipelined'][self.name]['pca']['status']['retries']
-            #
-            # # print(_pipe_done, _pipe_failed, _preview_done, _outdated)
-            # go = (_pipe_done and (not _pipe_failed)) and ((not _pca_done) or _outdated) \
-            #      and (_num_tries <= self.config['misc']['max_retries'])
-            #
-            # return go
-            return False
-
-        elif part == 'faint_star_pipeline:pca:preview':
-
-            # # pipeline done?
-            # _pipe_done = self.db_entry['pipelined'][self.name]['status']['done']
-            #
-            # # failed?
-            # _pipe_failed = self.db_entry['pipelined'][self.name]['classified_as'] == 'failed'
-            #
-            # # pca done?
-            # _pca_done = self.db_entry['pipelined'][self.name]['pca']['status']['done']
-            #
-            # # pca preview done?
-            # _pca_preview_done = self.db_entry['pipelined'][self.name]['pca']['preview']['done']
-            #
-            # # last_modified == pipe_last_modified?
-            # _outdated = abs((self.db_entry['pipelined'][self.name]['pca']['preview']['last_modified'] -
-            #                  self.db_entry['pipelined'][self.name]['last_modified']).total_seconds()) > 1.0
-            #
-            # go = (_pipe_done and (not _pipe_failed) and _pca_done) and ((not _pca_preview_done) or _outdated)
-            #
-            # return go
-            return False
 
     @staticmethod
     def init_status():
@@ -5074,41 +3333,7 @@ class RoboaoFaintStarPipeline(RoboaoPipeline):
             },
             'location': [],
             'lock_position': None,
-            'shifts': None,
-
-            'strehl': {
-                'status': {
-                    'force_redo': False,
-                    'enqueued': False,
-                    'done': False,
-                    'retries': 0
-                },
-                'lock_position': None,
-                'ratio_percent': None,
-                'core_arcsec': None,
-                'halo_arcsec': None,
-                'fwhm_arcsec': None,
-                'flag': None,
-                'last_modified': time_now_utc
-            },
-            'pca': {
-                'status': {
-                    'force_redo': False,
-                    'enqueued': False,
-                    'done': False,
-                    'retries': 0
-                },
-                'preview': {
-                    'force_redo': False,
-                    'done': False,
-                    'retries': 0,
-                    'last_modified': time_now_utc
-                },
-                'lock_position': None,
-                'contrast_curve': None,
-                'library_psf_id_corr': None,
-                'last_modified': time_now_utc
-            }
+            'shifts': None
         }
 
     def generate_preview(self, f_fits, path_obs, path_out):
@@ -5124,7 +3349,7 @@ class RoboaoFaintStarPipeline(RoboaoPipeline):
                                                       _x=None, _y=None, _drizzled=_drizzled)
 
         # Strehl ratio (if available, otherwise will be None)
-        SR = self.db_entry['pipelined'][self.name]['strehl']['ratio_percent']
+        SR = None
 
         # fits_header = get_fits_header(f_fits)
         fits_header = self.db_entry['fits_header']
@@ -5140,71 +3365,6 @@ class RoboaoFaintStarPipeline(RoboaoPipeline):
                      SR, _fow_x=self.config['telescope'][self.telescope]['fov_x'],
                      _pix_x=_pix_x, _drizzled=_drizzled,
                      _x=_x, _y=_y)
-
-    def generate_pca_preview(self, _path_out, _preview_img, _cc, _fow_x=36, _pix_x=1024, _drizzled=False):
-        """
-            Generate preview images for the pca pipeline
-
-        :param _path_out:
-        :param _preview_img:
-        :param _cc: contrast curve
-        :param _fow_x: full FoW in arcseconds in the x direction
-        :param _pix_x: original (raw) full frame size in pixels
-        :param _drizzled: drizzle on or off?
-
-        :return:
-        """
-        # import matplotlib
-        # matplotlib.use('Agg')
-        import matplotlib.pyplot as plt
-        _obs = self.db_entry['_id']
-
-        ''' plot psf-subtracted image '''
-        plt.close('all')
-        fig = plt.figure(_obs)
-        fig.set_size_inches(3, 3, forward=False)
-        # ax = fig.add_subplot(111)
-        ax = plt.Axes(fig, [0., 0., 1., 1.])
-        ax.set_axis_off()
-        fig.add_axes(ax)
-        ax.imshow(_preview_img, cmap=plt.cm.magma, origin='lower', interpolation='nearest')
-        # add scale bar:
-        # draw a horizontal bar with length of 0.1*x_size
-        # (ax.transData) with a label underneath.
-        bar_len = _preview_img.shape[0] * 0.1
-        # account for possible drizzling
-        mltplr = 2 if _drizzled else 1
-        bar_len_str = '{:.1f}'.format(bar_len * _fow_x / _pix_x / mltplr)
-        asb = AnchoredSizeBar(ax.transData,
-                              bar_len,
-                              bar_len_str[0] + r"$^{\prime\prime}\!\!\!.$" + bar_len_str[-1],
-                              loc=4, pad=0.3, borderpad=0.5, sep=10, frameon=False)
-        ax.add_artist(asb)
-
-        # save figure
-        fig.savefig(os.path.join(_path_out, _obs + '_pca.png'), dpi=300)
-
-        ''' plot the contrast curve '''
-        # convert cc to numpy array if necessary:
-
-        if not isinstance(_cc, np.ndarray):
-            _cc = np.array(_cc)
-
-        plt.close('all')
-        fig = plt.figure('Contrast curve for {:s}'.format(_obs), figsize=(8, 3.5), dpi=200)
-        ax = fig.add_subplot(111)
-        ax.set_title(_obs)  # , fontsize=14)
-        # ax.plot(_cc[:, 0], -2.5 * np.log10(_cc[:, 1]), 'k-', linewidth=2.5)
-        # _cc[:, 1] is already in mag:
-        ax.plot(_cc[:, 0], _cc[:, 1], 'k-', linewidth=2.5)
-        ax.set_xlim([0.2, 1.45])
-        ax.set_xlabel('Separation [arcseconds]')  # , fontsize=18)
-        ax.set_ylabel('Contrast [$\Delta$mag]')  # , fontsize=18)
-        ax.set_ylim([0, 8])
-        ax.set_ylim(ax.get_ylim()[::-1])
-        ax.grid(linewidth=0.5)
-        plt.tight_layout()
-        fig.savefig(os.path.join(_path_out, _obs + '_contrast_curve.png'), dpi=200)
 
     def run(self, part=None):
         """
@@ -5233,27 +3393,63 @@ class RoboaoFaintStarPipeline(RoboaoPipeline):
         _path_calib = os.path.join(self.config['path']['path_archive'], _date, 'calib')
 
         if part == 'faint_star_pipeline':
-            # steps from reduce_data_multithread.py + image_reconstruction.cpp
 
             # raw files:
             _raws_zipped = sorted(self.db_entry['raw_data']['data'])
 
-            # unbzip raw source file(s):
-            lbunzip2(_path_in=_path_raw, _files=_raws_zipped, _path_out=_path_tmp, _keep=True)
-
-            # unzipped file names:
-            raws = [os.path.join(_path_tmp, os.path.splitext(_f)[0]) for _f in _raws_zipped]
+            # full file names:
+            raws = [os.path.join(_path_tmp, _f) for _f in _raws_zipped]
 
             ''' go off with processing '''
             # get frame size
             x_size = self.db_entry['fits_header']['NAXIS1'][0]
             y_size = self.db_entry['fits_header']['NAXIS2'][0]
 
-            # get x_lock, y_lock from BSP! Can do that here, will need to copy code over from there,
-            # so that's basically to save time.
+            base_val = 0
+
+            with fits.open(sorted(raws)[0]) as p:
+                img_size = p[0].data.shape
+
+                # make 5 frames and median combine them to avoid selecting cosmic rays as the guide star
+                if _v:
+                    print("Getting initial frame average")
+                avg_imgs = np.zeros((5, x_size, y_size))
+
+                for avg_n in range(0, 5):
+                    n_avg_frames = 0.0
+                    for frame_n in list(range(avg_n, len(p), 5))[::4]:
+                        avg_imgs[avg_n] += p[frame_n].data + base_val
+                        n_avg_frames += 1.0
+                    avg_imgs[avg_n] /= n_avg_frames
+
+                avg_img = np.median(avg_imgs, axis=0)
+
+                mid_portion = avg_img[30:avg_img.shape[0] - 30, 30:avg_img.shape[1] - 30]
+
+                # if there's a NaN something's gone horribly wrong
+                if np.sum(mid_portion) != np.sum(mid_portion):
+
+                    raise RuntimeError('Something went horribly wrong')
+
+                if _v:
+                    print(mid_portion.shape)
+
+                mid_portion = ndimage.gaussian_filter(mid_portion, sigma=10)
+
+                # subtract off a much more smoothed version to remove large-scale gradients across the image
+                mid_portion -= ndimage.gaussian_filter(mid_portion, sigma=60)
+
+                mid_portion = mid_portion[30:mid_portion.shape[0] - 30, 30:mid_portion.shape[1] - 30]
+
+                final_gs_y, final_gs_x = np.unravel_index(mid_portion.argmax(), mid_portion.shape)
+                final_gs_y += 60
+                final_gs_x += 60
+                if _v:
+                    print("\tGuide star selected at:", final_gs_x, final_gs_y)
+
             # will cut a window around x_lock, y_lock of size win to do image registration
-            x_lock, y_lock = self.get_xy_from_pipeline_settings_txt(os.path.join(_path_archive,
-                                                                                 self.db_entry['_id'], 'bright_star'))
+            x_lock, y_lock = final_gs_x, final_gs_y
+
             # convert to nearest integers
             cy0, cx0 = int(y_lock), int(x_lock)
             if _v:
@@ -5262,8 +3458,8 @@ class RoboaoFaintStarPipeline(RoboaoPipeline):
             # make sure win is not too close to image edge
             win = int(np.min([self.config['pipeline'][self.name]['win'], np.min([x_lock, x_size - x_lock]),
                               np.min([y_lock, y_size - y_lock])]))
-            # use highest-Strehl frame to align individual frames to:
-            pivot = self.get_best_pipe_frame(os.path.join(_path_archive, self.db_entry['_id'], 'bright_star'))
+            # use avg_img to align individual frames to:
+            pivot = avg_img
 
             files_sizes = [os.stat(fs).st_size for fs in raws]
 
@@ -5490,7 +3686,7 @@ class RoboaoFaintStarPipeline(RoboaoPipeline):
             self.db_entry['pipelined'][self.name]['status']['force_redo'] = False
             self.db_entry['pipelined'][self.name]['status']['retries'] += 1
 
-            # set last_modified as 100p.fits modified date:
+            # set last_modified as summed.fits modified date:
             time_tag = datetime.datetime.utcfromtimestamp(os.stat(os.path.join(_path_out,
                                '{:s}_summed.fits'.format(self.db_entry['_id']))).st_mtime)
             self.db_entry['pipelined'][self.name]['last_modified'] = time_tag
@@ -5523,21 +3719,6 @@ class RoboaoFaintStarPipeline(RoboaoPipeline):
             self.db_entry['pipelined'][self.name]['preview']['last_modified'] = \
                 self.db_entry['pipelined'][self.name]['last_modified']
 
-        elif part == 'faint_star_pipeline:strehl':
-            # compute strehl
-            raise NotImplementedError
-
-        elif part == 'faint_star_pipeline:pca':
-            # run high-contrast pipeline
-            raise NotImplementedError
-
-        elif part == 'faint_star_pipeline:pca:preview':
-            # generate previews for high-contrast pipeline
-            raise NotImplementedError
-
-        else:
-            raise RuntimeError('unknown pipeline part')
-
     @staticmethod
     def calibrate_frame(im, _dark, _flat, _iter=3):
         im_BKGD = deepcopy(im)
@@ -5556,80 +3737,80 @@ class RoboaoFaintStarPipeline(RoboaoPipeline):
         return im
 
 
-def job_faint_star_pipeline(_id=None, _config=None, _db_entry=None, _task_hash=None):
+def job_registration_pipeline(_id=None, _config=None, _db_entry=None, _task_hash=None):
     try:
         # init pipe here again. [as it's not JSON serializable]
-        pip = RoboaoFaintStarPipeline(_config=_config, _db_entry=_db_entry)
+        pip = KPEDRegistrationPipeline(_config=_config, _db_entry=_db_entry)
         # run the pipeline
-        pip.run(part='faint_star_pipeline')
+        pip.run(part='registration_pipeline')
 
-        return {'_id': _id, 'job': 'faint_star_pipeline', 'hash': _task_hash,
+        return {'_id': _id, 'job': 'registration_pipeline', 'hash': _task_hash,
                 'status': 'ok', 'message': str(datetime.datetime.now()),
                 'db_record_update': ({'_id': _id},
                                      {'$set': {
-                                         'pipelined.faint_star': pip.db_entry['pipelined']['faint_star']
+                                         'pipelined.registration': pip.db_entry['pipelined']['registration']
                                      }}
                                      )
                 }
     except Exception as _e:
         traceback.print_exc()
         try:
-            _status = _db_entry['pipelined']['faint_star']
+            _status = _db_entry['pipelined']['registration']
         except Exception as _ee:
             print(str(_ee))
             traceback.print_exc()
             # failed? flush status:
-            _status = RoboaoFaintStarPipeline.init_status()
+            _status = KPEDRegistrationPipeline.init_status()
         # retries++
         _status['status']['retries'] += 1
         _status['status']['enqueued'] = False
         _status['status']['force_redo'] = False
         _status['status']['done'] = False
         _status['last_modified'] = utc_now()
-        return {'_id': _id, 'job': 'faint_star_pipeline', 'hash': _task_hash,
+        return {'_id': _id, 'job': 'registration_pipeline', 'hash': _task_hash,
                 'status': 'error', 'message': str(_e),
                 'db_record_update': ({'_id': _id},
                                      {'$set': {
-                                         'pipelined.faint_star': _status
+                                         'pipelined.registration': _status
                                      }}
                                      )
                 }
 
 
-def job_faint_star_pipeline_preview(_id=None, _config=None, _db_entry=None, _task_hash=None):
+def job_registration_pipeline_preview(_id=None, _config=None, _db_entry=None, _task_hash=None):
     try:
         # init pipe here again. [as it's not JSON serializable]
-        pip = RoboaoFaintStarPipeline(_config=_config, _db_entry=_db_entry)
-        pip.run(part='faint_star_pipeline:preview')
+        pip = KPEDRegistrationPipeline(_config=_config, _db_entry=_db_entry)
+        pip.run(part='registration_pipeline:preview')
 
-        return {'_id': _id, 'job': 'faint_star_pipeline:preview', 'hash': _task_hash,
+        return {'_id': _id, 'job': 'registration_pipeline:preview', 'hash': _task_hash,
                 'status': 'ok', 'message': str(datetime.datetime.now()),
                 'db_record_update': ({'_id': _id},
                                      {'$set': {
                                          'pipelined.{:s}.preview'.format(pip.name):
-                                             pip.db_entry['pipelined']['faint_star']['preview']
+                                             pip.db_entry['pipelined']['registration']['preview']
                                      }}
                                      )
                 }
     except Exception as _e:
         traceback.print_exc()
         try:
-            _status = _db_entry['pipelined']['faint_star']
+            _status = _db_entry['pipelined']['registration_pipeline']
         except Exception as _ee:
             print(str(_ee))
             traceback.print_exc()
             # failed? flush status:
-            _status = RoboaoFaintStarPipeline.init_status()
+            _status = KPEDRegistrationPipeline.init_status()
         # retries++
         _status['preview']['retries'] += 1
         _status['preview']['done'] = False
         _status['preview']['force_redo'] = False
         _status['preview']['last_modified'] = utc_now()
-        return {'_id': _id, 'job': 'faint_star_pipeline:preview', 'hash': _task_hash,
+        return {'_id': _id, 'job': 'registration_pipeline:preview', 'hash': _task_hash,
                 'status': 'error', 'message': str(_e),
                 'db_record_update': ({'_id': _id},
                                      {'$set': {
-                                         'pipelined.faint_star.preview': _status['preview']
+                                         'pipelined.registration_pipeline.preview': _status['preview']
                                      }}
                                      )
                 }
@@ -5639,7 +3820,7 @@ if __name__ == '__main__':
 
     ''' Create command line argument parser '''
     parser = argparse.ArgumentParser(formatter_class=argparse.RawDescriptionHelpFormatter,
-                                     description='Manage data archive for Robo-AO')
+                                     description='Data archive for KPED')
 
     parser.add_argument('config_file', metavar='config_file',
                         action='store', help='path to config file.', type=str)
@@ -5647,7 +3828,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     # init archiver:
-    arch = RoboaoArchiver(args.config_file)
+    arch = KPEDArchiver(args.config_file)
 
     # start the archiver main house-keeping cycle:
     arch.cycle()

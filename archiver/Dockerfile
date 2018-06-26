@@ -13,6 +13,7 @@ RUN mkdir -p /app
 
 # install python libs
 COPY code/requirements.txt /app/
+RUN pip install Cython && pip install numpy
 RUN pip install -r /app/requirements.txt
 
 # copy over the secrets:

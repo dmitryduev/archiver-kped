@@ -3,7 +3,6 @@ astropy>=3.0.3
 distributed>=1.22.0
 future>=0.16.0
 matplotlib>=2.2.2
-numpy>=1.14.5
 photutils>=0.4
 psutil>=5.4.6
 pyfftw>=0.10.4
@@ -18,5 +17,4 @@ timeout_decorator>=0.4.0
 -e git://github.com/dmitryduev/broker.git#egg=penquins
 -e git://github.com/dmitryduev/image_registration.git#egg=image_registration
 -e git://github.com/cmccully/lacosmicx.git#egg=lacosmicx
--e git://github.com/megalut/sewpy
--e git://github.com/dmitryduev/VIP.git
+-e git://github.com/megalut/sewpy#egg=sewpy
