@@ -1,0 +1,167 @@
+{
+  "server": {
+    "environment": "test",
+    "host": "0.0.0.0",
+    "port": "8082",
+    "analysis_machine_external_host": "140.252.53.120",
+    "analysis_machine_external_port": "22220",
+    "help": {
+      "self": "global server settings",
+      "host": "host ip for test env deployment",
+      "port": "port for test env deployment. in production, this is handled by supervisord/gunicorn",
+      "environment": "'test' or 'production'"
+    }
+  },
+
+  "path": {
+    "path_logs": "/app/logs/",
+    "path_raw": ["/data/"],
+    "path_archive": "/archive/",
+    "path_tmp": "/app/_tmp/",
+    "help": {
+      "self": "path to all kinds of stuff. these are internal container paths",
+      "path_logs": "path to store logs",
+      "path_raw": "list with path(s) to data sources",
+      "path_archive": "list with path to store processed data",
+      "path_tmp": "path to store temporary stuff"
+    }
+  },
+
+  "database": {
+    "host": "127.0.0.1",
+    "port": 27017,
+    "db": "kped",
+    "user": "kped",
+    "pwd": "kpedkicksass",
+    "collection_obs": "objects",
+    "collection_aux": "aux",
+    "collection_pwd": "users",
+    "help": {
+      "self": "Details about the database",
+      "host": "host running MongoDB replica from replica set",
+      "port": "port where MongoDB is running on host",
+      "db": "main DB dame",
+      "user": "global DB access user name",
+      "pwd": "global DB access password",
+      "collection_obs": "collection with science data",
+      "collection_aux": "collection with auxiliary data (seeing, summary Strehls, contrast curves etc.)",
+      "collection_pwd": "collection with user login/data access credentials"
+    }
+  },
+
+  "parallel": {
+    "n_workers": 4,
+    "threads_per_worker": 1,
+
+    "help": {
+      "self": "settings for running parallel computation with dask.distributed",
+      "n_workers": "number of separate processes",
+      "threads_per_worker": "number of threads per process"
+    }
+  },
+
+  "misc": {
+    "archiving_start_date": "2018/06/01",
+    "max_retries": 20,
+    "logging_level": "debug",
+    "nap_at_night": false,
+    "nap_time_frame": "local",
+    "nap_time_start": "23:30",
+    "nap_time_stop": "04:00",
+    "loop_interval": 0.2,
+    "vo_server": "http://skyview.gsfc.nasa.gov/cgi-bin/vo/sia.pl?",
+
+    "help": {
+      "self": "miscellaneous stuff",
+      "archiving_start_date": "only look at data starting from date YYYY/MM/DD",
+      "max_retries": "try redoing failed stuff this many times",
+      "logging_level": "'debug', 'info', 'warning', 'error', or 'critical'",
+      "nap_at_night": "do not interfere with the nightly operations if true",
+      "nap_time_frame": "'local' or 'UTC'?",
+      "nap_time_start": "HH:MM in 24-hour format",
+      "nap_time_stop": "HH:MM in 24-hour format. could be next morning",
+      "loop_interval": "interval [minutes] to rerun the archiver if not nap time",
+      "vo_server": "external VO image server"
+    }
+  },
+
+  "telescope": {
+    "KPNO_2.1m": {
+      "fov_x": 264,
+      "fov_y": 264,
+      "scale": 0.2578125,
+      "scale_red": 0.2578125,
+      "scale_IR": null,
+      "D1": 2.1,
+      "D2": 0.879,
+      "Strehl_factor": {
+        "Sg": [0.0650379861553, 0.00195904513521],
+        "Sr": [0.0393821289397, 0.00067801330536],
+        "Si": [0.0266019992502, 0.000301292354134],
+        "Sz": [0.0194992892766, 0.000159280151932],
+        "lp600": [0.0299002454758, 0.000399512263876],
+        "c": [0.0299002454758, 0.000399512263876]
+      }
+    },
+
+    "help": {
+      "self": "Telescope/camera data"
+    }
+  },
+
+  "pipeline": {
+
+    "registration": {
+      "upsampling_factor": 1,
+      "win": 64,
+      "n_threads": 4,
+      "sextractor_settings": [],
+
+      "help": {
+        "self": "registration pipeline",
+        "upsampling_factor": "output image Fourier up-sampling factor, int",
+        "win": "window size",
+        "n_threads": "number of threads to use in fftw",
+        "sextractor_settings": "SExtractor settings"
+      }
+    },
+
+    "photometry": {
+
+      "stack_intervals": [1, 2, 8],
+      "sextractor_settings": [],
+      "verbose": true,
+
+      "help": {
+        "self": "stacking/photometry pipeline",
+        "stack_intervals": "stacking intervals in seconds",
+        "sextractor_settings": "SExtractor settings",
+        "verbose": "vocalize what's happening?"
+      }
+    },
+
+    "astrometry": {
+
+      "verbose": true,
+
+      "help": {
+        "self": "astrometry pipeline",
+        "verbose": "vocalize what's happening?"
+      }
+    },
+
+    "seeing": {
+      "fit_model": "Gaussian2D",
+      "win": 20,
+      "help": {
+        "fit_model": "Gaussian2D or Moffat2D",
+        "win": "box size",
+        "self": "pipeline to process nightly seeing data"
+      }
+    },
+
+    "help": {
+      "self": "define pipeline parameters here"
+    }
+  }
+}
