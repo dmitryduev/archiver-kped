@@ -1438,8 +1438,8 @@ class KPEDArchiver(Archiver):
             # # science obs must start with program number (e.g. 24_ or 24.1_)
             # pattern_start = r'\d+.?\d??_'
             # must be a fpacked fits file
-            pattern_end = r'.[0-9]{6}.fits.fz\Z'
-            pattern_fits = r'.fits.fz\Z'
+            # pattern_end = r'.[0-9]{6}_0.fits.fz\Z'
+            pattern_fits = r'_0.fits.fz\Z'
 
             while True:
 
@@ -1544,9 +1544,9 @@ class KPEDArchiver(Archiver):
                             # get all science observations
                             try:
                                 # skip calibration files and pointings
-                                date_obs = [re.split(pattern_fits, s)[0] for s in date_raw_data
-                                            if re.search(pattern_end, s) is not None and
-                                            # re.match(pattern_start, s) is not None and
+                                # print([re.split(pattern_fits, s)[0] for s in date_raw_data])
+                                date_obs = [re.split(pattern_fits, s)[0] for s in date_raw_data if
+                                            re.search(pattern_fits, s) is not None and
                                             re.match('bias_', s) is None and
                                             re.match('dark_', s) is None and
                                             re.match('flat_', s) is None and
@@ -2737,13 +2737,14 @@ class KPEDObservation(Observation):
             # play safe if pi's unknown:
             _prog_pi = ['admin']
         # stack name together if necessary (if contains underscores):
-        _sou_name = '_'.join(_tmp[0:-5])
+        # print(_tmp)
+        _sou_name = '_'.join(_tmp[0:-4])
         # code of the filter used:
-        _filt = _tmp[-5:-4][0]
+        _filt = _tmp[-4:-3][0]
         # date and time of obs:
         _date_utc = datetime.datetime.strptime(_tmp[-3] + _tmp[-2], '%Y%m%d%H%M%S.%f')
         # marker:
-        _marker = _tmp[-3:-2][0]
+        _marker = _tmp[-1]
 
         # telescope:
         _telescope = 'KPNO_2.1m'
