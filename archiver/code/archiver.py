@@ -61,7 +61,7 @@ with open('secrets.json') as sjson:
     secrets = json.load(sjson)
 
 # connect to Kowalski
-kowalski = Kowalski(username=secrets['kowalski']['user'], password=secrets['kowalski']['password'])
+# kowalski = Kowalski(username=secrets['kowalski']['user'], password=secrets['kowalski']['password'])
 
 
 # Scale bars
@@ -335,12 +335,17 @@ def get_fits_header(fits_file):
     """
     # read fits:
     with fits.open(os.path.join(fits_file)) as hdulist:
-        # header:
-        header = OrderedDict()
-        for _entry in hdulist[0].header.cards:
-            header[_entry[0]] = _entry[1:]
+        # header(s):
 
-    return header
+        header_0 = OrderedDict()
+        for _entry in hdulist[0].header.cards:
+            header_0[_entry[0]] = _entry[1:]
+
+        header_1 = OrderedDict()
+        for _entry in hdulist[1].header.cards:
+            header_1[_entry[0]] = _entry[1:]
+
+    return header_0, header_1
 
 
 def radec_str2rad(_ra_str, _dec_str):
@@ -693,7 +698,10 @@ class Archiver(object):
             '''
             # set up a LocalCluster
             self.cluster = LocalCluster(n_workers=self.config['parallel']['n_workers'],
-                                        threads_per_worker=self.config['parallel']['threads_per_worker'])
+                                        threads_per_worker=self.config['parallel']['threads_per_worker'],
+                                        memory_limit=self.config['parallel']['memory_limit'],
+                                        local_dir=self.config['path']['path_tmp'],
+                                        silence_logs=self.config['parallel']['silence_logs'])
             # connect to local cluster
             self.c = Client(self.cluster)
 
@@ -2517,7 +2525,7 @@ class KPEDObservation(Observation):
 
         # good to go?
         if go:
-            # should and can run BSP pipeline itself?
+            # should and can run RP pipeline itself?
             _part = 'registration_pipeline'
             go = pipe.check_conditions(part=_part)
             if go:
@@ -2940,7 +2948,7 @@ class KPEDPipeline(Pipeline):
                                 "A_IMAGE", "B_IMAGE", "FWHM_IMAGE", "FLAGS", "FLAGS_WEIGHT",
                                 "FLUX_AUTO", "FLUXERR_AUTO", "FLUX_RADIUS"],
                         config={"DETECT_MINAREA": 5, "PHOT_APERTURES": "10", 'DETECT_THRESH': '5.0'},
-                        sexpath="sex")
+                        sexpath="sextractor")
 
         out = sew(os.path.join(_path, _fits_name))
         # sort by FWHM
@@ -3089,7 +3097,7 @@ class KPEDPipeline(Pipeline):
                                     "A_IMAGE", "B_IMAGE", "FWHM_IMAGE", "FLAGS", "FLAGS_WEIGHT",
                                     "FLUX_AUTO", "FLUXERR_AUTO", "FLUX_RADIUS"],
                             config={"DETECT_MINAREA": 8, "PHOT_APERTURES": "10", 'DETECT_THRESH': '5.0'},
-                            sexpath="sex")
+                            sexpath="sextractor")
 
             out = sew(os.path.join(_path, _fits_name))
             # sort by FWHM
@@ -3390,10 +3398,11 @@ class KPEDRegistrationPipeline(KPEDPipeline):
         try:
             # _pix_x = int(re.search(r'(:)(\d+)',
             #                        _select['pipelined'][_pipe]['fits_header']['DETSIZE'][0]).group(2))
-            _pix_x = int(re.search(r'(:)(\d+)', fits_header['DETSIZE'][0]).group(2))
+            _pix_x = int(re.search(r'(:)(\d+)', fits_header[1]['ROISEC'][0]).group(2))
         except KeyError:
             # this should be there, even if it's sum.fits
-            _pix_x = int(fits_header['NAXIS1'][0])
+            # _pix_x = int(fits_header['NAXIS1'][0])
+            _pix_x = 1024
 
         self.preview(path_out, self.db_entry['_id'], preview_img, preview_img_cropped,
                      SR, _fow_x=self.config['telescope'][self.telescope]['fov_x'],
@@ -3426,22 +3435,28 @@ class KPEDRegistrationPipeline(KPEDPipeline):
         # path to calibration data produced by lucky pipeline:
         _path_calib = os.path.join(self.config['path']['path_archive'], _date, 'calib')
 
-        if part == 'faint_star_pipeline':
+        if part == 'registration_pipeline':
 
             # raw files:
             _raws_zipped = sorted(self.db_entry['raw_data']['data'])
 
             # full file names:
-            raws = [os.path.join(_path_tmp, _f) for _f in _raws_zipped]
+            raws = [os.path.join(_path_raw, _f) for _f in _raws_zipped]
 
             ''' go off with processing '''
             # get frame size
-            x_size = self.db_entry['fits_header']['NAXIS1'][0]
-            y_size = self.db_entry['fits_header']['NAXIS2'][0]
+            if 'ZNAXIS1' in self.db_entry['fits_header'][1]:
+                x_size = self.db_entry['fits_header'][1]['ZNAXIS1'][0]
+                y_size = self.db_entry['fits_header'][1]['ZNAXIS2'][0]
+            elif 'NAXIS1' in self.db_entry['fits_header'][1]:
+                x_size = self.db_entry['fits_header'][1]['NAXIS1'][0]
+                y_size = self.db_entry['fits_header'][1]['NAXIS2'][0]
+            else:
+                x_size, y_size = 1024, 2014
 
             base_val = 0
 
-            with fits.open(sorted(raws)[0]) as p:
+            with fits.open(sorted(raws)[0])[1:] as p:
                 img_size = p[0].data.shape
 
                 # make 5 frames and median combine them to avoid selecting cosmic rays as the guide star
@@ -3493,7 +3508,7 @@ class KPEDRegistrationPipeline(KPEDPipeline):
             win = int(np.min([self.config['pipeline'][self.name]['win'], np.min([x_lock, x_size - x_lock]),
                               np.min([y_lock, y_size - y_lock])]))
             # use avg_img to align individual frames to:
-            pivot = avg_img
+            pivot = (-1, -1)
 
             files_sizes = [os.stat(fs).st_size for fs in raws]
 
@@ -3502,7 +3517,7 @@ class KPEDRegistrationPipeline(KPEDPipeline):
             # number of frames in each fits file
             n_frames_files = []
             for jj, _file in enumerate(raws):
-                with fits.open(_file) as _hdulist:
+                with fits.open(_file)[1:] as _hdulist:
                     if jj == 0:
                         # get image size (this would be (1024, 1024) for the Andor camera)
                         image_size = _hdulist[0].shape
@@ -3517,7 +3532,7 @@ class KPEDRegistrationPipeline(KPEDPipeline):
             summed_seeing_limited_frame = np.zeros((image_size[0], image_size[1]), dtype=np.float)
             for jj, _file in enumerate(raws):
                 # print(jj)
-                with fits.open(_file, memmap=True) as _hdulist:
+                with fits.open(_file, memmap=True)[1:] as _hdulist:
                     # frames_before = sum(n_frames_files[:jj])
                     for ii, _ in enumerate(_hdulist):
                         try:
@@ -3547,7 +3562,8 @@ class KPEDRegistrationPipeline(KPEDPipeline):
             # load darks and flats
             if _v:
                 print('Loading darks and flats')
-            dark, flat = self.load_darks_and_flats(_path_calib, str(int(self.db_entry['fits_header']['MODE_NUM'][0])),
+            dark, flat = self.load_darks_and_flats(_path_calib,
+                                                   str(int(self.db_entry['fits_header'][0]['MODE_NUM'][0])),
                                                    self.db_entry['filter'], image_size[0])
             if dark is None or flat is None:
                 raise Exception('Could not open darks and flats')
@@ -3573,7 +3589,7 @@ class KPEDRegistrationPipeline(KPEDPipeline):
                 print('using seeing-limited image as pivot frame')
             else:
                 try:
-                    with fits.open(raws[pivot[0]], memmap=True) as _hdulist:
+                    with fits.open(raws[pivot[0]], memmap=True)[1:] as _hdulist:
                         im1 = np.array(np.nan_to_num(_hdulist[pivot[1]].data), dtype=np.float)
                     print('using frame {:d} from raw fits-file #{:d} as pivot frame'.format(*pivot[::-1]))
                 except Exception as _e:
@@ -3614,7 +3630,7 @@ class KPEDRegistrationPipeline(KPEDPipeline):
             fn = 0
             # from time import time as _time
             for jj, _file in enumerate(raws):
-                with fits.open(_file) as _hdulist:
+                with fits.open(_file)[1:] as _hdulist:
                     # frames_before = sum(n_frames_files[:jj])
                     for ii, _ in enumerate(_hdulist):
                         try:
@@ -3698,14 +3714,15 @@ class KPEDRegistrationPipeline(KPEDPipeline):
 
             # save seeing-limited
             export_fits(os.path.join(_path_out, self.db_entry['_id'] + '_simple_sum.fits'),
-                        summed_seeing_limited_frame, header)
+                        summed_seeing_limited_frame, _header=None)
 
             # save stacked
             export_fits(os.path.join(_path_out, self.db_entry['_id'] + '_summed.fits'),
-                        summed_frame, header)
+                        summed_frame, _header=None)
 
-            cyf, cxf = self.image_center(_path=_path_out, _fits_name=self.db_entry['_id'] + '_summed.fits',
-                                         _x0=cx0, _y0=cy0, _win=win)
+            # cyf, cxf = self.image_center(_path=_path_out, _fits_name=self.db_entry['_id'] + '_summed.fits',
+            #                              _x0=cx0, _y0=cy0, _win=win)
+            cxf, cyf = x_lock, y_lock
             if _v:
                 print('Output lock position:', cxf, cyf)
             with open(os.path.join(_path_out, 'shifts.txt'), 'w') as _f:
@@ -3739,7 +3756,7 @@ class KPEDRegistrationPipeline(KPEDPipeline):
             #         print('removing', _file)
             #     os.remove(os.path.join(_file))
 
-        elif part == 'faint_star_pipeline:preview':
+        elif part == 'registration_pipeline:preview':
             # generate previews
             path_obs = os.path.join(_path_archive, self.db_entry['_id'], self.name)
             f_fits = os.path.join(path_obs, '{:s}_summed.fits'.format(self.db_entry['_id']))
@@ -3840,11 +3857,11 @@ def job_registration_pipeline_preview(_id=None, _config=None, _db_entry=None, _t
         _status['preview']['done'] = False
         _status['preview']['force_redo'] = False
         _status['preview']['last_modified'] = utc_now()
-        return {'_id': _id, 'job': 'registration_pipeline:preview', 'hash': _task_hash,
+        return {'_id': _id, 'job': 'registration:preview', 'hash': _task_hash,
                 'status': 'error', 'message': str(_e),
                 'db_record_update': ({'_id': _id},
                                      {'$set': {
-                                         'pipelined.registration_pipeline.preview': _status['preview']
+                                         'pipelined.registration.preview': _status['preview']
                                      }}
                                      )
                 }
