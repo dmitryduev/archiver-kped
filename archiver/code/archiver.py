@@ -1176,7 +1176,7 @@ class KPEDArchiver(Archiver):
 
         return result
 
-    @timeout(seconds_before_timeout=120)
+    # @timeout(seconds_before_timeout=120)
     def connect_to_db(self):
         """
             Connect to Robo-AO's MongoDB-powered database
@@ -1279,7 +1279,7 @@ class KPEDArchiver(Archiver):
         self.db['coll_aux'] = _coll_aux
         self.db['program_pi'] = _program_pi
 
-    @timeout(seconds_before_timeout=120)
+    # @timeout(seconds_before_timeout=120)
     def disconnect_from_db(self):
         """
             Disconnect from Robo-AO's MongoDB database.
@@ -1299,7 +1299,7 @@ class KPEDArchiver(Archiver):
         else:
             self.logger.debug('No connection found.')
 
-    @timeout(seconds_before_timeout=120)
+    # @timeout(seconds_before_timeout=120)
     def check_db_connection(self):
         """
             Check if DB connection is alive/established.
@@ -1327,7 +1327,7 @@ class KPEDArchiver(Archiver):
 
         return True
 
-    @timeout(seconds_before_timeout=120)
+    # @timeout(seconds_before_timeout=120)
     def get_raw_data_descriptors(self):
         """
             Parse source(s) containing raw data and get dates with observational data.
@@ -1370,7 +1370,7 @@ class KPEDArchiver(Archiver):
         """
         return sorted([os.path.basename(_p) for _p in glob.glob(os.path.join(_location, _date, '*.fits.fz'))])
 
-    @timeout(seconds_before_timeout=20)
+    # @timeout(seconds_before_timeout=20)
     def insert_db_entry(self, _collection=None, _db_entry=None):
         """
             Insert a document _doc to collection _collection in DB.
@@ -1387,7 +1387,7 @@ class KPEDArchiver(Archiver):
             self.logger.error('Error inserting {:s} into {:s}'.format(_db_entry, _collection))
             self.logger.error(e)
 
-    @timeout_decorator.timeout(20, use_signals=False)
+    # @timeout_decorator.timeout(20, use_signals=False)
     def update_db_entry(self, _collection=None, upd=None):
         """
             Update DB entry
@@ -1779,7 +1779,7 @@ class KPEDArchiver(Archiver):
                 self.logger.info('Finished archiving cycle.')
                 return False
 
-    @timeout(seconds_before_timeout=600)
+    # @timeout(seconds_before_timeout=600)
     def load_darks_and_flats(self, _date, _mode, _filt, image_size_x=1024):
         """
             Load darks and flats
@@ -1820,7 +1820,7 @@ class KPEDArchiver(Archiver):
                 }
             )
 
-    @timeout(seconds_before_timeout=600)
+    # @timeout(seconds_before_timeout=600)
     def calibration(self, _location, _date, _date_raw_data):
         """
             Handle calibration data
@@ -2034,6 +2034,10 @@ class KPEDArchiver(Archiver):
                 # copy "default" calib data over:
                 _path_in = os.path.join(self.config['path']['path_archive'], 'calib')
 
+                # output dir exists?
+                if not os.path.exists(_path_out):
+                    os.makedirs(_path_out)
+
                 # copy master calib files over:
                 for _f in os.listdir(_path_in):
                     shutil.copy2(os.path.join(_path_in, _f), _path_out)
@@ -2161,7 +2165,7 @@ class KPEDArchiver(Archiver):
                 traceback.print_exc()
                 return None, None, None, None, None, None, None
 
-    @timeout(seconds_before_timeout=600)
+    # @timeout(seconds_before_timeout=600)
     def auxiliary(self, _location, _date, _date_raw_data):
         """
         TODO:
