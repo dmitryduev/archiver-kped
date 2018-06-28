@@ -119,7 +119,7 @@
 
     "registration": {
       "upsampling_factor": 1,
-      "win": 150,
+      "win": 300,
       "n_threads": 4,
       "sextractor_settings": [],
       "verbose": true,
