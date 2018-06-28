@@ -1690,7 +1690,7 @@ class KPEDArchiver(Archiver):
                                     # we'll be adding one task per observation at a time to avoid
                                     # complicating things.
                                     # self.task_runner will take care of executing the task
-                                    pipe_task = kped_obs.get_task()
+                                    pipe_task, pipe_task_to_compute_hash = kped_obs.get_task()
 
                                     if pipe_task is not None:
                                         # print(pipe_task)
@@ -1700,8 +1700,10 @@ class KPEDArchiver(Archiver):
                                         pipe_task_hashable = dumps(pipe_task)
 
                                         # compute hash for task:
-                                        pipe_task_hash = self.hash_task(pipe_task_hashable)
+                                        pipe_task_hash = self.hash_task(dumps(pipe_task_to_compute_hash))
+
                                         # not enqueued?
+                                        print(pipe_task_hash, self.task_hashes)
                                         if pipe_task_hash not in self.task_hashes:
                                             print({'id': pipe_task['id'], 'task': pipe_task['task']})
                                             if 'db_record_update' in pipe_task:
@@ -2515,6 +2517,7 @@ class KPEDObservation(Observation):
         :return:
         """
         _task = None
+        _task_to_compute_hash = None
 
         # Registration?
         ''' Registration pipeline '''
@@ -2540,7 +2543,8 @@ class KPEDObservation(Observation):
                                               }}
                                               )
                          }
-                return _task
+                _task_to_compute_hash = {'task': _part, 'id': self.id, 'config': self.config}
+                return _task, _task_to_compute_hash
 
             # should and can run preview generation for BSP pipeline itself?
             _part = 'registration_pipeline:preview'
@@ -2548,7 +2552,8 @@ class KPEDObservation(Observation):
             # print(self.id, _part, go)
             if go:
                 _task = {'task': _part, 'id': self.id, 'config': self.config, 'db_entry': pipe.db_entry}
-                return _task
+                _task_to_compute_hash = {'task': _part, 'id': self.id, 'config': self.config}
+                return _task, _task_to_compute_hash
 
         # TODO:
         # Photometry?
@@ -2557,7 +2562,7 @@ class KPEDObservation(Observation):
         # Photometry?
         ''' Astrometry pipeline '''
 
-        return _task
+        return _task, _task_to_compute_hash
 
     def check_raws(self, _location, _date, _date_raw_data):
         """
@@ -2617,12 +2622,14 @@ class KPEDObservation(Observation):
                 self.db_entry['fits_header'] = fits_header
 
                 # separately, parse exposure and magnitude
-                self.db_entry['exposure'] = float(fits_header['EXPOSURE'][0]) if ('EXPOSURE' in fits_header) else None
-                self.db_entry['magnitude'] = float(fits_header['MAGNITUD'][0]) if ('MAGNITUD' in fits_header) else None
+                self.db_entry['exposure'] = float(fits_header[0]['EXPOSURE'][0]) \
+                    if ('EXPOSURE' in fits_header[0]) else None
+                self.db_entry['magnitude'] = float(fits_header[0]['MAGNITUD'][0]) \
+                    if ('MAGNITUD' in fits_header[0]) else None
 
                 # Get and parse coordinates
-                _ra_str = fits_header['TELRA'][0] if 'TELRA' in fits_header else None
-                _objra = fits_header['OBJRA'][0] if 'OBJRA' in fits_header else None
+                _ra_str = fits_header[0]['TELRA'][0] if 'TELRA' in fits_header[0] else None
+                _objra = fits_header[0]['OBJRA'][0] if 'OBJRA' in fits_header[0] else None
                 if _objra is not None:
                     for letter in ('h, m'):
                         _objra = _objra.replace(letter, ':')
@@ -2632,8 +2639,8 @@ class KPEDObservation(Observation):
                 if _ra_str is None:
                     _ra_str = _objra
 
-                _dec_str = fits_header['TELDEC'][0] if 'TELDEC' in fits_header else None
-                _objdec = fits_header['OBJDEC'][0] if 'OBJDEC' in fits_header else None
+                _dec_str = fits_header[0]['TELDEC'][0] if 'TELDEC' in fits_header[0] else None
+                _objdec = fits_header[0]['OBJDEC'][0] if 'OBJDEC' in fits_header[0] else None
                 if _objdec is not None:
                     for letter in ('d, m'):
                         _objdec = _objdec.replace(letter, ':')
@@ -2643,9 +2650,9 @@ class KPEDObservation(Observation):
                 if _dec_str is None:
                     _dec_str = _objdec
 
-                _az_str = str(fits_header['AZIMUTH'][0]) if 'AZIMUTH' in fits_header else None
-                _el_str = str(fits_header['ELVATION'][0]) if 'ELVATION' in fits_header else None
-                _epoch = float(fits_header['EQUINOX'][0]) if 'EQUINOX' in fits_header else 2000.0
+                _az_str = str(fits_header[0]['AZIMUTH'][0]) if 'AZIMUTH' in fits_header[0] else None
+                _el_str = str(fits_header[0]['ELVATION'][0]) if 'ELVATION' in fits_header[0] else None
+                _epoch = float(fits_header[0]['EQUINOX'][0]) if 'EQUINOX' in fits_header[0] else 2000.0
 
                 if None in (_ra_str, _dec_str):
                     _azel = None
@@ -2676,6 +2683,8 @@ class KPEDObservation(Observation):
                 self.db_entry['coordinates']['radec_geojson'] = {'type': 'Point', 'coordinates': _radec_deg}
                 self.db_entry['coordinates']['radec'] = _radec
                 self.db_entry['coordinates']['azel'] = _azel
+                self.db_entry['coordinates']['radec_deg'] = [_radec[0] * 180.0 / np.pi, _radec[1] * 180.0 / np.pi]
+                self.db_entry['coordinates']['azel_deg'] = [_azel[0] * 180.0 / np.pi, _azel[1] * 180.0 / np.pi]
 
                 # DB updates are handled by the main archiver process
                 # we'll provide it with proper query to feed into pymongo's update_one()
@@ -2791,8 +2800,10 @@ class KPEDObservation(Observation):
             'coordinates': {
                 'epoch': None,
                 'radec': None,
+                'radec_deg': None,
                 'radec_str': None,
-                'azel': None
+                'azel': None,
+                'azel_deg': None
             },
             'fits_header': {},
 
@@ -3235,8 +3246,8 @@ class KPEDPipeline(Pipeline):
             ax.add_patch(Rectangle((_y - _w / 2, _x - _h / 2), _w, _h,
                                    fill=False, edgecolor='#f3f3f3', linestyle='dotted'))
         # ax.imshow(preview_img, cmap='gist_heat', origin='lower', interpolation='nearest')
-        # plt.axis('off')
-        plt.grid('off')
+        # plt.axis(False)
+        plt.grid(False)
 
         # save full figure
         fname_full = '{:s}_full.png'.format(_obs)
@@ -3508,7 +3519,617 @@ class KPEDRegistrationPipeline(KPEDPipeline):
             win = int(np.min([self.config['pipeline'][self.name]['win'], np.min([x_lock, x_size - x_lock]),
                               np.min([y_lock, y_size - y_lock])]))
             # use avg_img to align individual frames to:
-            pivot = (-1, -1)
+            # pivot = (-1, -1)
+            # use first frame to align individual frames to:
+            pivot = (0, 1)
+
+            files_sizes = [os.stat(fs).st_size for fs in raws]
+
+            # get total number of frames to allocate
+            # bar = pyprind.ProgBar(sum(files_sizes), stream=1, title='Getting total number of frames')
+            # number of frames in each fits file
+            n_frames_files = []
+            for jj, _file in enumerate(raws):
+                with fits.open(_file)[1:] as _hdulist:
+                    if jj == 0:
+                        # get image size (this would be (1024, 1024) for the Andor camera)
+                        image_size = _hdulist[0].shape
+                    n_frames_files.append(len(_hdulist))
+                    # bar.update(iterations=files_sizes[jj])
+            # total number of frames
+            numFrames = sum(n_frames_files)
+
+            # Stack to seeing-limited image
+            if _v:
+                bar = pyprind.ProgBar(sum(files_sizes), stream=1, title='Stacking to seeing-limited image')
+            summed_seeing_limited_frame = np.zeros((image_size[0], image_size[1]), dtype=np.float)
+            for jj, _file in enumerate(raws):
+                # print(jj)
+                with fits.open(_file, memmap=True)[1:] as _hdulist:
+                    # frames_before = sum(n_frames_files[:jj])
+                    for ii, _ in enumerate(_hdulist):
+                        try:
+                            summed_seeing_limited_frame += np.nan_to_num(_hdulist[ii].data)
+                        except Exception as _e:
+                            print(_e)
+                            continue
+                        # print(ii + frames_before, '\n', _data[ii, :, :])
+                if _v:
+                    bar.update(iterations=files_sizes[jj])
+
+            # check if there are data to be processed:
+            if np.abs(np.max(summed_seeing_limited_frame)) < 1e-9:  # only zeros in summed_seeing_limited_frame
+                raise Exception('No data in the cube to be processed.')
+
+            # remove cosmic rays:
+            if _v:
+                print('removing cosmic rays from the seeing limited image')
+            summed_seeing_limited_frame = \
+            lax.lacosmicx(np.ascontiguousarray(summed_seeing_limited_frame, dtype=np.float32),
+                          sigclip=20, sigfrac=0.3, objlim=5.0,
+                          gain=1.0, readnoise=6.5, satlevel=65536.0, pssl=0.0, niter=4,
+                          sepmed=True, cleantype='meanmask', fsmode='median',
+                          psfmodel='gauss', psffwhm=2.5, psfsize=7, psfk=None,
+                          psfbeta=4.765, verbose=False)[1]
+
+            # load darks and flats
+            if _v:
+                print('Loading darks and flats')
+            dark, flat = self.load_darks_and_flats(_path_calib,
+                                                   str(int(self.db_entry['fits_header'][0]['MODE_NUM'][0])),
+                                                   self.db_entry['filter'], image_size[0])
+            if dark is None or flat is None:
+                raise Exception('Could not open darks and flats')
+
+            if _v:
+                print('Total number of frames to be registered: {:d}'.format(numFrames))
+
+            # Sum of all (properly shifted) frames (with not too large a shift and chi**2)
+            _upsampling_factor = int(self.config['pipeline'][self.name]['upsampling_factor'])
+            # assert (type(_upsampling_factor) == int), '_upsampling_factor must be int'
+            if _upsampling_factor == 1:
+                summed_frame = np.zeros_like(summed_seeing_limited_frame, dtype=np.float)
+            else:
+                summed_frame = np.zeros((summed_seeing_limited_frame.shape[0] * _upsampling_factor,
+                                         summed_seeing_limited_frame.shape[1] * _upsampling_factor), dtype=np.float)
+
+            # Pick a frame to align to
+            # seeing-limited sum of all frames:
+            if _v:
+                print(pivot)
+            if pivot == (-1, -1):
+                im1 = deepcopy(summed_seeing_limited_frame)
+                print('using seeing-limited image as pivot frame')
+            else:
+                try:
+                    with fits.open(raws[pivot[0]], memmap=True)[1:] as _hdulist:
+                        im1 = np.array(np.nan_to_num(_hdulist[pivot[1]].data), dtype=np.float)
+                    print('using frame {:d} from raw fits-file #{:d} as pivot frame'.format(*pivot[::-1]))
+                except Exception as _e:
+                    print(_e)
+                    im1 = deepcopy(summed_seeing_limited_frame)
+                    print('using seeing-limited image as pivot frame')
+
+            # print(im1.shape, dark.shape, flat.shape)
+            im1 = self.calibrate_frame(im1, dark, flat, _iter=3)
+            im1 = gaussian_filter(im1, sigma=5)  # 5, 10
+            im1 = im1[cy0 - win: cy0 + win, cx0 - win: cx0 + win]
+
+            # add resolution!
+            if _upsampling_factor != 1:
+                im1 = image_registration.fft_tools.upsample_image(im1, upsample_factor=_upsampling_factor)
+
+            # export_fits(os.path.join(_path_out, self.db_entry['_id'] + '_pivot_win.fits'), im1)
+
+            # frame_num x y ex ey:
+            shifts = np.zeros((numFrames, 5))
+
+            # set up frequency grid for shift2d
+            ny, nx = image_size
+            if _upsampling_factor != 1:
+                ny *= _upsampling_factor
+                nx *= _upsampling_factor
+
+            xfreq_0 = np.fft.fftfreq(nx)[np.newaxis, :]
+            yfreq_0 = np.fft.fftfreq(ny)[:, np.newaxis]
+
+            nthreads = self.config['pipeline'][self.name]['n_threads']
+            fftn, ifftn = image_registration.fft_tools.fast_ffts.get_ffts(nthreads=nthreads, use_numpy_fft=False)
+
+            # prepare a fits file to write registered files to:
+            path_registered_stack = os.path.join(_path_out, self.db_entry['_id'] + '_registered.fits')
+            with fits.open(raws[0], memmap=True) as _hdulist:
+                hdu = fits.PrimaryHDU(header=_hdulist[0].header)
+                hdulist = fits.HDUList([hdu])
+                hdulist.writeto(path_registered_stack, overwrite=True)
+
+            if _v:
+                bar = pyprind.ProgBar(numFrames, stream=1, title='Registering frames')
+
+            fn = 0
+            # from time import time as _time
+            # TODO: sort properly: '1', '2', ... '10' etc!
+            for jj, _file in enumerate(sorted(raws)):
+                with fits.open(_file, memmap=True)[1:] as _hdulist:
+                    # frames_before = sum(n_frames_files[:jj])
+                    for ii, _ in enumerate(_hdulist):
+                        try:
+                            img = np.array(np.nan_to_num(_hdulist[ii].data), dtype=np.float)  # do proper casting
+                        except Exception as _e:
+                            print(_e)
+                            continue
+
+                        # tic = _time()
+                        img = self.calibrate_frame(img, dark, flat, _iter=3)
+                        # print(_time()-tic)
+
+                        # tic = _time()
+                        img_comp = gaussian_filter(img, sigma=5)
+                        img_comp = img_comp[cy0 - win: cy0 + win, cx0 - win: cx0 + win]
+                        # print(_time() - tic)
+
+                        # add resolution!
+                        if _upsampling_factor != 1:
+                            img_comp = image_registration.fft_tools.upsample_image(img_comp,
+                                                                                   upsample_factor=_upsampling_factor)
+
+                        # tic = _time()
+                        # chi2_shift -> chi2_shift_iterzoom
+                        dy2, dx2, edy2, edx2 = image_registration.chi2_shift(im1, img_comp, nthreads=nthreads,
+                                                                             upsample_factor='auto', zeromean=True)
+                        # print(fn, dx2, dy2, edx2, edy2)
+                        # print(_time() - tic)
+                        # tic = _time()
+                        # note the order of dx and dy in shift2d vs shiftnd!!!
+                        # img = image_registration.fft_tools.shiftnd(img, (-dx2, -dy2),
+                        #                                            nthreads=_nthreads, use_numpy_fft=False)
+                        # img = self.shift2d(fftn, ifftn, img, -dy2, -dx2, xfreq_0, yfreq_0)
+                        if _upsampling_factor == 1:
+                            img = self.shift2d(fftn, ifftn, img, -dy2, -dx2, xfreq_0, yfreq_0)
+                        else:
+                            img = self.shift2d(fftn, ifftn, image_registration.fft_tools.upsample_image(img,
+                                                                                   upsample_factor=_upsampling_factor),
+                                          -dy2, -dx2, xfreq_0, yfreq_0)
+                        # print(_time() - tic, '\n')
+
+                        # if np.sqrt(dx2 ** 2 + dy2 ** 2) > 0.8 * _win \
+                        #     or np.sqrt(edx2 ** 2 + edy2 ** 2) > 0.5:
+                        if np.sqrt(dx2 ** 2 + dy2 ** 2) > 0.85 * win:
+                            # skip frames with too large a shift
+                            # pass
+                            shifts[fn, :] = [fn, 0, 0, 0, 0]
+                            # print(' # {:d} shift was too big: '.format(i),
+                            #       np.sqrt(shifts[i, 1] ** 2 + shifts[i, 2] ** 2), shifts[i, 1], shifts[i, 2])
+                        else:
+                            # otherwise store the shift values and add to the 'integrated' image
+                            shifts[fn, :] = [fn, -dx2, -dy2, edx2, edy2]
+                            summed_frame += img
+                            # also, append to the '_registered' file:
+                            fits.append(path_registered_stack, img, _hdulist[ii].header)
+
+                        if _v:
+                            bar.update()
+
+                        # increment frame number
+                        fn += 1
+
+            if _v:
+                print('Largest move was {:.2f} pixels for frame {:d}'.
+                      format(np.max(np.sqrt(shifts[:, 1] ** 2 + shifts[:, 2] ** 2)),
+                             np.argmax(np.sqrt(shifts[:, 1] ** 2 + shifts[:, 2] ** 2))))
+
+            # remove cosmic rays:
+            if _v:
+                print('removing cosmic rays from the stacked image')
+            summed_frame = lax.lacosmicx(np.ascontiguousarray(summed_frame, dtype=np.float32),
+                                         sigclip=20, sigfrac=0.3, objlim=5.0,
+                                         gain=1.0, readnoise=6.5, satlevel=65536.0, pssl=0.0, niter=4,
+                                         sepmed=True, cleantype='meanmask', fsmode='median',
+                                         psfmodel='gauss', psffwhm=2.5, psfsize=7, psfk=None,
+                                         psfbeta=4.765, verbose=False)[1]
+
+            # output
+            if not os.path.exists(_path_out):
+                os.makedirs(os.path.join(_path_out))
+
+            # get original fits header for output
+            header = self.db_entry['fits_header']
+
+            # save seeing-limited
+            export_fits(os.path.join(_path_out, self.db_entry['_id'] + '_simple_sum.fits'),
+                        summed_seeing_limited_frame, _header=None)
+
+            # save stacked
+            export_fits(os.path.join(_path_out, self.db_entry['_id'] + '_registered_sum.fits'),
+                        summed_frame, _header=None)
+
+            # cyf, cxf = self.image_center(_path=_path_out, _fits_name=self.db_entry['_id'] + '_summed.fits',
+            #                              _x0=cx0, _y0=cy0, _win=win)
+            cxf, cyf = x_lock, y_lock
+            if _v:
+                print('Output lock position:', cxf, cyf)
+            with open(os.path.join(_path_out, 'shifts.txt'), 'w') as _f:
+                _f.write('# lock position: {:d} {:d}\n'.format(cxf, cyf))
+                _f.write('# frame_number x_shift[pix] y_shift[pix] ex_shift[pix] ey_shift[pix]\n')
+                for _i, _x, _y, _ex, _ey in shifts:
+                    _f.write('{:.0f} {:.3f} {:.3f} {:.3f} {:.3f}\n'.format(_i, _x, _y, _ex, _ey))
+
+            # reduction successful? prepare db entry for update
+            self.db_entry['pipelined'][self.name]['status']['done'] = True
+            self.db_entry['pipelined'][self.name]['status']['enqueued'] = False
+            self.db_entry['pipelined'][self.name]['status']['force_redo'] = False
+            self.db_entry['pipelined'][self.name]['status']['retries'] += 1
+
+            # set last_modified as summed.fits modified date:
+            time_tag = datetime.datetime.utcfromtimestamp(os.stat(os.path.join(_path_out,
+                               '{:s}_summed.fits'.format(self.db_entry['_id']))).st_mtime)
+            self.db_entry['pipelined'][self.name]['last_modified'] = time_tag
+
+            self.db_entry['pipelined'][self.name]['location'] = _path_out
+
+            self.db_entry['pipelined'][self.name]['lock_position'] = [int(cxf), int(cyf)]
+
+            shifts_db = []
+            for l in shifts:
+                shifts_db.append([int(l[0])] + list(map(float, l[1:])))
+            self.db_entry['pipelined'][self.name]['shifts'] = shifts_db
+
+            # for _file in raws:
+            #     if _v:
+            #         print('removing', _file)
+            #     os.remove(os.path.join(_file))
+
+        elif part == 'registration_pipeline:preview':
+            # generate previews
+            path_obs = os.path.join(_path_archive, self.db_entry['_id'], self.name)
+            f_fits = os.path.join(path_obs, '{:s}_summed.fits'.format(self.db_entry['_id']))
+            path_out = os.path.join(path_obs, 'preview')
+            self.generate_preview(f_fits=f_fits, path_obs=path_obs, path_out=path_out)
+
+            # prepare to update db entry:
+            self.db_entry['pipelined'][self.name]['preview']['done'] = True
+            self.db_entry['pipelined'][self.name]['preview']['force_redo'] = False
+            self.db_entry['pipelined'][self.name]['preview']['retries'] += 1
+            self.db_entry['pipelined'][self.name]['preview']['last_modified'] = \
+                self.db_entry['pipelined'][self.name]['last_modified']
+
+    @staticmethod
+    def calibrate_frame(im, _dark, _flat, _iter=3):
+        im_BKGD = deepcopy(im)
+        for j in range(int(_iter)):  # do 3 iterations of sigma-clipping
+            try:
+                temp = sigmaclip(im_BKGD, 3.0, 3.0)
+                im_BKGD = temp[0]  # return arr is 1st element
+            except Exception as _e:
+                print(_e)
+                pass
+        sum_BKGD = np.mean(im_BKGD)  # average CCD BKGD
+        im -= sum_BKGD
+        im -= _dark
+        im /= _flat
+
+        return im
+
+
+def job_registration_pipeline(_id=None, _config=None, _db_entry=None, _task_hash=None):
+    try:
+        # init pipe here again. [as it's not JSON serializable]
+        pip = KPEDRegistrationPipeline(_config=_config, _db_entry=_db_entry)
+        # run the pipeline
+        pip.run(part='registration_pipeline')
+
+        return {'_id': _id, 'job': 'registration_pipeline', 'hash': _task_hash,
+                'status': 'ok', 'message': str(datetime.datetime.now()),
+                'db_record_update': ({'_id': _id},
+                                     {'$set': {
+                                         'pipelined.registration': pip.db_entry['pipelined']['registration']
+                                     }}
+                                     )
+                }
+    except Exception as _e:
+        traceback.print_exc()
+        try:
+            _status = _db_entry['pipelined']['registration']
+        except Exception as _ee:
+            print(str(_ee))
+            traceback.print_exc()
+            # failed? flush status:
+            _status = KPEDRegistrationPipeline.init_status()
+        # retries++
+        _status['status']['retries'] += 1
+        _status['status']['enqueued'] = False
+        _status['status']['force_redo'] = False
+        _status['status']['done'] = False
+        _status['last_modified'] = utc_now()
+        return {'_id': _id, 'job': 'registration_pipeline', 'hash': _task_hash,
+                'status': 'error', 'message': str(_e),
+                'db_record_update': ({'_id': _id},
+                                     {'$set': {
+                                         'pipelined.registration': _status
+                                     }}
+                                     )
+                }
+
+
+def job_registration_pipeline_preview(_id=None, _config=None, _db_entry=None, _task_hash=None):
+    try:
+        # init pipe here again. [as it's not JSON serializable]
+        pip = KPEDRegistrationPipeline(_config=_config, _db_entry=_db_entry)
+        pip.run(part='registration_pipeline:preview')
+
+        return {'_id': _id, 'job': 'registration_pipeline:preview', 'hash': _task_hash,
+                'status': 'ok', 'message': str(datetime.datetime.now()),
+                'db_record_update': ({'_id': _id},
+                                     {'$set': {
+                                         'pipelined.{:s}.preview'.format(pip.name):
+                                             pip.db_entry['pipelined']['registration']['preview']
+                                     }}
+                                     )
+                }
+    except Exception as _e:
+        traceback.print_exc()
+        try:
+            _status = _db_entry['pipelined']['registration_pipeline']
+        except Exception as _ee:
+            print(str(_ee))
+            traceback.print_exc()
+            # failed? flush status:
+            _status = KPEDRegistrationPipeline.init_status()
+        # retries++
+        _status['preview']['retries'] += 1
+        _status['preview']['done'] = False
+        _status['preview']['force_redo'] = False
+        _status['preview']['last_modified'] = utc_now()
+        return {'_id': _id, 'job': 'registration:preview', 'hash': _task_hash,
+                'status': 'error', 'message': str(_e),
+                'db_record_update': ({'_id': _id},
+                                     {'$set': {
+                                         'pipelined.registration.preview': _status['preview']
+                                     }}
+                                     )
+                }
+
+
+class KPEDAstrometryPipeline(KPEDPipeline):
+    """
+        KPED's Astrometry Pipeline
+    """
+    def __init__(self, _config, _db_entry):
+        """
+            Init KPED's Astrometry Pipeline
+            :param _config: dict with configuration
+            :param _db_entry: observation DB entry
+        """
+        ''' initialize super class '''
+        super(KPEDAstrometryPipeline, self).__init__(_config=_config, _db_entry=_db_entry)
+
+        # pipeline name. This goes to 'pipelined' field of obs DB entry
+        self.name = 'astrometry'
+
+        # initialize status
+        if self.name not in self.db_entry['pipelined']:
+            self.db_entry['pipelined'][self.name] = self.init_status()
+
+    def check_necessary_conditions(self):
+        """
+            Check if should be run on an obs (if necessary conditions are met)
+            :param _db_entry: observation DB entry
+        :return:
+        """
+        go = True
+
+        if 'go' in self.config['pipeline'][self.name]:
+            for field_name, field_condition in self.config['pipeline'][self.name]['go'].items():
+                if field_name != 'help':
+                    # build proper dict reference expression
+                    keys = field_name.split('.')
+                    expr = 'self.db_entry'
+                    for key in keys:
+                        expr += "['{:s}']".format(key)
+                    # get condition
+                    condition = eval(expr + ' ' + field_condition)
+                    # eval condition
+                    go = go and condition
+
+        return go
+
+    def check_conditions(self, part=None):
+        """
+            Perform condition checks for running specific parts of pipeline
+            :param part: which part of pipeline to run
+        :return:
+        """
+        assert part is not None, 'must specify what to check'
+
+        # check the AP itself?
+        if part == 'astrometry_pipeline':
+
+            # force redo requested?
+            _force_redo = self.db_entry['pipelined'][self.name]['status']['force_redo']
+            # pipeline done?
+            _done = self.db_entry['pipelined'][self.name]['status']['done']
+            # how many times tried?
+            _num_tries = self.db_entry['pipelined'][self.name]['status']['retries']
+
+            go = (_force_redo or ((not _done) and (_num_tries <= self.config['misc']['max_retries'])))
+
+            return go
+
+        # Preview generation for the results of AP processing?
+        elif part == 'astrometry_pipeline:preview':
+
+            # pipeline done?
+            _pipe_done = self.db_entry['pipelined'][self.name]['status']['done']
+
+            # preview generated?
+            _preview_done = self.db_entry['pipelined'][self.name]['preview']['done']
+
+            # last_modified == pipe_last_modified?
+            _outdated = abs((self.db_entry['pipelined'][self.name]['preview']['last_modified'] -
+                             self.db_entry['pipelined'][self.name]['last_modified']).total_seconds()) > 5.0
+
+            # how many times tried?
+            _num_tries = self.db_entry['pipelined'][self.name]['preview']['retries']
+
+            go = _pipe_done and ((not _preview_done) or _outdated) \
+                 and (_num_tries <= self.config['misc']['max_retries'])
+
+            return go
+
+    @staticmethod
+    def init_status():
+        time_now_utc = utc_now()
+        return {
+            'status': {
+                'done': False,
+                'enqueued': False,
+                'force_redo': False,
+                'retries': 0,
+            },
+            'last_modified': time_now_utc,
+            'preview': {
+                'done': False,
+                'force_redo': False,
+                'retries': 0,
+                'last_modified': time_now_utc
+            },
+            'location': [],
+            'matches': None
+        }
+
+    def generate_preview(self, f_fits, path_obs, path_out):
+        # load first image frame from the fits file
+        preview_img = np.nan_to_num(load_fits(f_fits))
+        # scale with local contrast optimization for preview:
+        preview_img = self.scale_image(preview_img, correction='local')
+        # cropped image [_win=None to try to detect]
+        _drizzled = False if self.config['pipeline'][self.name]['upsampling_factor'] == 1 else True
+        preview_img_cropped, _x, _y = self.trim_frame(_path=path_obs,
+                                                      _fits_name=os.path.split(f_fits)[1],
+                                                      _win=None, _method='shifts.txt',
+                                                      _x=None, _y=None, _drizzled=_drizzled)
+
+        # Strehl ratio (if available, otherwise will be None)
+        SR = None
+
+        # fits_header = get_fits_header(f_fits)
+        fits_header = self.db_entry['fits_header']
+        try:
+            # _pix_x = int(re.search(r'(:)(\d+)',
+            #                        _select['pipelined'][_pipe]['fits_header']['DETSIZE'][0]).group(2))
+            _pix_x = int(re.search(r'(:)(\d+)', fits_header[1]['ROISEC'][0]).group(2))
+        except KeyError:
+            # this should be there, even if it's sum.fits
+            # _pix_x = int(fits_header['NAXIS1'][0])
+            _pix_x = 1024
+
+        self.preview(path_out, self.db_entry['_id'], preview_img, preview_img_cropped,
+                     SR, _fow_x=self.config['telescope'][self.telescope]['fov_x'],
+                     _pix_x=_pix_x, _drizzled=_drizzled,
+                     _x=_x, _y=_y)
+
+    def run(self, part=None):
+        """
+            Execute specific part of pipeline.
+            Possible errors are caught and handled by tasks running specific parts of pipeline
+        :return:
+        """
+        # TODO:
+        assert part is not None, 'must specify part to execute'
+
+        # verbose?
+        _v = self.config['pipeline'][self.name]['verbose']
+
+        # UTC date of obs:
+        _date = self.db_entry['date_utc'].strftime('%Y%m%d')
+
+        # path to store unzipped raw files
+        _path_tmp = self.config['path']['path_tmp']
+        # path to raw files:
+        _path_raw = os.path.join(self.db_entry['raw_data']['location'][1], _date)
+        # path to archive:
+        _path_archive = os.path.join(self.config['path']['path_archive'], _date)
+        # path to output:
+        _path_out = os.path.join(_path_archive, self.db_entry['_id'], self.name)
+        # path to calibration data produced by lucky pipeline:
+        _path_calib = os.path.join(self.config['path']['path_archive'], _date, 'calib')
+
+        if part == 'registration_pipeline':
+
+            # raw files:
+            _raws_zipped = sorted(self.db_entry['raw_data']['data'])
+
+            # full file names:
+            raws = [os.path.join(_path_raw, _f) for _f in _raws_zipped]
+
+            ''' go off with processing '''
+            # get frame size
+            if 'ZNAXIS1' in self.db_entry['fits_header'][1]:
+                x_size = self.db_entry['fits_header'][1]['ZNAXIS1'][0]
+                y_size = self.db_entry['fits_header'][1]['ZNAXIS2'][0]
+            elif 'NAXIS1' in self.db_entry['fits_header'][1]:
+                x_size = self.db_entry['fits_header'][1]['NAXIS1'][0]
+                y_size = self.db_entry['fits_header'][1]['NAXIS2'][0]
+            else:
+                x_size, y_size = 1024, 2014
+
+            base_val = 0
+
+            with fits.open(sorted(raws)[0])[1:] as p:
+                img_size = p[0].data.shape
+
+                # make 5 frames and median combine them to avoid selecting cosmic rays as the guide star
+                if _v:
+                    print("Getting initial frame average")
+                avg_imgs = np.zeros((5, x_size, y_size))
+
+                for avg_n in range(0, 5):
+                    n_avg_frames = 0.0
+                    for frame_n in list(range(avg_n, len(p), 5))[::4]:
+                        avg_imgs[avg_n] += p[frame_n].data + base_val
+                        n_avg_frames += 1.0
+                    avg_imgs[avg_n] /= n_avg_frames
+
+                avg_img = np.median(avg_imgs, axis=0)
+
+                mid_portion = avg_img[30:avg_img.shape[0] - 30, 30:avg_img.shape[1] - 30]
+
+                # if there's a NaN something's gone horribly wrong
+                if np.sum(mid_portion) != np.sum(mid_portion):
+
+                    raise RuntimeError('Something went horribly wrong')
+
+                if _v:
+                    print(mid_portion.shape)
+
+                mid_portion = ndimage.gaussian_filter(mid_portion, sigma=10)
+
+                # subtract off a much more smoothed version to remove large-scale gradients across the image
+                mid_portion -= ndimage.gaussian_filter(mid_portion, sigma=60)
+
+                mid_portion = mid_portion[30:mid_portion.shape[0] - 30, 30:mid_portion.shape[1] - 30]
+
+                final_gs_y, final_gs_x = np.unravel_index(mid_portion.argmax(), mid_portion.shape)
+                final_gs_y += 60
+                final_gs_x += 60
+                if _v:
+                    print("\tGuide star selected at:", final_gs_x, final_gs_y)
+
+            # will cut a window around x_lock, y_lock of size win to do image registration
+            x_lock, y_lock = final_gs_x, final_gs_y
+
+            # convert to nearest integers
+            cy0, cx0 = int(y_lock), int(x_lock)
+            if _v:
+                print('initial lock position:', cx0, cy0)
+
+            # make sure win is not too close to image edge
+            win = int(np.min([self.config['pipeline'][self.name]['win'], np.min([x_lock, x_size - x_lock]),
+                              np.min([y_lock, y_size - y_lock])]))
+            # use avg_img to align individual frames to:
+            # pivot = (-1, -1)
+            # use first frame to align individual frames to:
+            pivot = (0, 1)
 
             files_sizes = [os.stat(fs).st_size for fs in raws]
 
@@ -3657,7 +4278,7 @@ class KPEDRegistrationPipeline(KPEDPipeline):
                         # chi2_shift -> chi2_shift_iterzoom
                         dy2, dx2, edy2, edx2 = image_registration.chi2_shift(im1, img_comp, nthreads=nthreads,
                                                                              upsample_factor='auto', zeromean=True)
-                        # print(dx2, dy2, edx2, edy2)
+                        # print(fn, dx2, dy2, edx2, edy2)
                         # print(_time() - tic)
                         # tic = _time()
                         # note the order of dx and dy in shift2d vs shiftnd!!!
@@ -3674,9 +4295,10 @@ class KPEDRegistrationPipeline(KPEDPipeline):
 
                         # if np.sqrt(dx2 ** 2 + dy2 ** 2) > 0.8 * _win \
                         #     or np.sqrt(edx2 ** 2 + edy2 ** 2) > 0.5:
-                        if np.sqrt(dx2 ** 2 + dy2 ** 2) > 0.8 * win:
+                        if np.sqrt(dx2 ** 2 + dy2 ** 2) > 0.85 * win:
                             # skip frames with too large a shift
-                            pass
+                            # pass
+                            shifts[fn, :] = [fn, 0, 0, 0, 0]
                             # print(' # {:d} shift was too big: '.format(i),
                             #       np.sqrt(shifts[i, 1] ** 2 + shifts[i, 2] ** 2), shifts[i, 1], shifts[i, 2])
                         else:
@@ -3713,7 +4335,7 @@ class KPEDRegistrationPipeline(KPEDPipeline):
             header = self.db_entry['fits_header']
 
             # save seeing-limited
-            export_fits(os.path.join(_path_out, self.db_entry['_id'] + '_simple_sum.fits'),
+            export_fits(os.path.join(_path_out, self.db_entry['_id'] + '_simple_stack.fits'),
                         summed_seeing_limited_frame, _header=None)
 
             # save stacked
@@ -3788,83 +4410,45 @@ class KPEDRegistrationPipeline(KPEDPipeline):
         return im
 
 
-def job_registration_pipeline(_id=None, _config=None, _db_entry=None, _task_hash=None):
+def job_astrometry_pipeline(_id=None, _config=None, _db_entry=None, _task_hash=None):
     try:
         # init pipe here again. [as it's not JSON serializable]
-        pip = KPEDRegistrationPipeline(_config=_config, _db_entry=_db_entry)
+        pip = KPEDAstrometryPipeline(_config=_config, _db_entry=_db_entry)
         # run the pipeline
-        pip.run(part='registration_pipeline')
+        pip.run(part='astrometry_pipeline')
 
-        return {'_id': _id, 'job': 'registration_pipeline', 'hash': _task_hash,
+        return {'_id': _id, 'job': 'astrometry_pipeline', 'hash': _task_hash,
                 'status': 'ok', 'message': str(datetime.datetime.now()),
                 'db_record_update': ({'_id': _id},
                                      {'$set': {
-                                         'pipelined.registration': pip.db_entry['pipelined']['registration']
+                                         'pipelined.astrometry': pip.db_entry['pipelined']['astrometry']
                                      }}
                                      )
                 }
     except Exception as _e:
         traceback.print_exc()
         try:
-            _status = _db_entry['pipelined']['registration']
+            _status = _db_entry['pipelined']['astrometry']
         except Exception as _ee:
             print(str(_ee))
             traceback.print_exc()
             # failed? flush status:
-            _status = KPEDRegistrationPipeline.init_status()
+            _status = KPEDAstrometryPipeline.init_status()
         # retries++
         _status['status']['retries'] += 1
         _status['status']['enqueued'] = False
         _status['status']['force_redo'] = False
         _status['status']['done'] = False
         _status['last_modified'] = utc_now()
-        return {'_id': _id, 'job': 'registration_pipeline', 'hash': _task_hash,
+        return {'_id': _id, 'job': 'astrometry_pipeline', 'hash': _task_hash,
                 'status': 'error', 'message': str(_e),
                 'db_record_update': ({'_id': _id},
                                      {'$set': {
-                                         'pipelined.registration': _status
+                                         'pipelined.astrometry': _status
                                      }}
                                      )
                 }
 
-
-def job_registration_pipeline_preview(_id=None, _config=None, _db_entry=None, _task_hash=None):
-    try:
-        # init pipe here again. [as it's not JSON serializable]
-        pip = KPEDRegistrationPipeline(_config=_config, _db_entry=_db_entry)
-        pip.run(part='registration_pipeline:preview')
-
-        return {'_id': _id, 'job': 'registration_pipeline:preview', 'hash': _task_hash,
-                'status': 'ok', 'message': str(datetime.datetime.now()),
-                'db_record_update': ({'_id': _id},
-                                     {'$set': {
-                                         'pipelined.{:s}.preview'.format(pip.name):
-                                             pip.db_entry['pipelined']['registration']['preview']
-                                     }}
-                                     )
-                }
-    except Exception as _e:
-        traceback.print_exc()
-        try:
-            _status = _db_entry['pipelined']['registration_pipeline']
-        except Exception as _ee:
-            print(str(_ee))
-            traceback.print_exc()
-            # failed? flush status:
-            _status = KPEDRegistrationPipeline.init_status()
-        # retries++
-        _status['preview']['retries'] += 1
-        _status['preview']['done'] = False
-        _status['preview']['force_redo'] = False
-        _status['preview']['last_modified'] = utc_now()
-        return {'_id': _id, 'job': 'registration:preview', 'hash': _task_hash,
-                'status': 'error', 'message': str(_e),
-                'db_record_update': ({'_id': _id},
-                                     {'$set': {
-                                         'pipelined.registration.preview': _status['preview']
-                                     }}
-                                     )
-                }
 
 
 if __name__ == '__main__':

@@ -21,6 +21,11 @@ docker run -d --restart always --name archiver-kped-mongo -p 27018:27017 -v arch
        mongo:latest
 ```
 
+Copy the default calibration data over to `/path/to/archive`
+```bash
+cp -r _archiver/calib /path/to/archive
+```
+
 Bulid and launch the archiver container. Bind-mount the raw/processed data directories on the host machine:
 ```bash
 cd archiver
