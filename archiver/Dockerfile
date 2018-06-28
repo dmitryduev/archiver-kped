@@ -28,6 +28,6 @@ ADD code/ /app/
 WORKDIR /app
 
 # run archiver
-CMD /bin/bash
+#CMD /bin/bash
 #CMD /usr/local/bin/supervisord -n -c supervisord.conf
-#CMD python archiver.py config.json
+CMD python archiver.py config.json
