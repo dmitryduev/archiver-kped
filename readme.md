@@ -4,7 +4,7 @@ _Dockerized Archiver for Kitt Peak EMCCD Demonstrator project_
 
 Clone the repo and cd to the directory:
 ```bash
-git clone https://github.com/mansikasliwal/archiver-kped.git
+git clone https://github.com/dmitryduev/archiver-kped.git
 cd archiver-kped
 ```
 
