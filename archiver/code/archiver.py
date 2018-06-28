@@ -64,6 +64,31 @@ with open('secrets.json') as sjson:
 # kowalski = Kowalski(username=secrets['kowalski']['user'], password=secrets['kowalski']['password'])
 
 
+def sort_raws(_raws):
+    try:
+        if not isinstance(_raws, list) or isinstance(_raws, tuple):
+            raise TypeError('List of files must be a tuple or list')
+        else:
+            if len(_raws) == 1:
+                return _raws
+            else:
+                _tmp = sorted(_raws)
+                _raws_sorted = [_tmp[0]]
+
+                pattern_num_fits = r'_([0-9]+).fits.fz\Z'
+
+                _f_nums = np.array([int(re.search(pattern_num_fits, ff).group(1)) for ff in _tmp[1:]])
+                # print(np.argsort(_f_nums))
+
+                _raws_sorted += list(np.array(_tmp[1:])[np.argsort(_f_nums)])
+
+                return _raws_sorted
+
+    except Exception as ex:
+        print(ex)
+        return _raws
+
+
 # Scale bars
 class AnchoredSizeBar(AnchoredOffsetbox):
     def __init__(self, transform, size, label, loc,
@@ -1706,7 +1731,7 @@ class KPEDArchiver(Archiver):
                                         pipe_task_hash = self.hash_task(dumps(pipe_task_to_compute_hash))
 
                                         # not enqueued?
-                                        print(pipe_task_hash, self.task_hashes)
+                                        # print(pipe_task_hash, self.task_hashes)
                                         if pipe_task_hash not in self.task_hashes:
                                             print({'id': pipe_task['id'], 'task': pipe_task['task']})
                                             if 'db_record_update' in pipe_task:
@@ -2686,8 +2711,10 @@ class KPEDObservation(Observation):
                 self.db_entry['coordinates']['radec_geojson'] = {'type': 'Point', 'coordinates': _radec_deg}
                 self.db_entry['coordinates']['radec'] = _radec
                 self.db_entry['coordinates']['azel'] = _azel
-                self.db_entry['coordinates']['radec_deg'] = [_radec[0] * 180.0 / np.pi, _radec[1] * 180.0 / np.pi]
-                self.db_entry['coordinates']['azel_deg'] = [_azel[0] * 180.0 / np.pi, _azel[1] * 180.0 / np.pi]
+                if _radec is not None:
+                    self.db_entry['coordinates']['radec_deg'] = [_radec[0] * 180.0 / np.pi, _radec[1] * 180.0 / np.pi]
+                if _azel is not None:
+                    self.db_entry['coordinates']['azel_deg'] = [_azel[0] * 180.0 / np.pi, _azel[1] * 180.0 / np.pi]
 
                 # DB updates are handled by the main archiver process
                 # we'll provide it with proper query to feed into pymongo's update_one()
@@ -3655,8 +3682,8 @@ class KPEDRegistrationPipeline(KPEDPipeline):
 
             fn = 0
             # from time import time as _time
-            # TODO: sort properly: '1', '2', ... '10' etc!
-            for jj, _file in enumerate(sorted(raws)):
+            # sort raws properly: '1', '2', ... '10' etc!
+            for jj, _file in enumerate(sort_raws(raws)):
                 with fits.open(_file, memmap=True)[1:] as _hdulist:
                     # frames_before = sum(n_frames_files[:jj])
                     for ii, _ in enumerate(_hdulist):
@@ -3997,6 +4024,7 @@ class KPEDAstrometryPipeline(KPEDPipeline):
                 'last_modified': time_now_utc
             },
             'location': [],
+            'astrometric_solution': None,
             'matches': None
         }
 
@@ -4040,12 +4068,10 @@ class KPEDAstrometryPipeline(KPEDPipeline):
 
             self.db_entry['pipelined'][self.name]['location'] = _path_out
 
-            self.db_entry['pipelined'][self.name]['lock_position'] = [int(cxf), int(cyf)]
+            # TODO:
+            self.db_entry['pipelined'][self.name]['astrometric_solution'] = None
 
-            shifts_db = []
-            for l in shifts:
-                shifts_db.append([int(l[0])] + list(map(float, l[1:])))
-            self.db_entry['pipelined'][self.name]['shifts'] = shifts_db
+            self.db_entry['pipelined'][self.name]['matches'] = None
 
             # for _file in raws:
             #     if _v:

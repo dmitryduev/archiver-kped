@@ -52,9 +52,9 @@
   },
 
   "parallel": {
-    "n_workers": 4,
+    "n_workers": 8,
     "threads_per_worker": 1,
-    "memory_limit": 4e9,
+    "memory_limit": 8e9,
     "silence_logs": "ERROR",
 
     "help": {
@@ -74,7 +74,7 @@
     "nap_time_frame": "local",
     "nap_time_start": "23:30",
     "nap_time_stop": "04:00",
-    "loop_interval": 1.0,
+    "loop_interval": 5.0,
     "vo_server": "http://skyview.gsfc.nasa.gov/cgi-bin/vo/sia.pl?",
 
     "help": {
