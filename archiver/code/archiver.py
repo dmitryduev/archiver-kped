@@ -3454,6 +3454,10 @@ class KPEDRegistrationPipeline(KPEDPipeline):
             # full file names:
             raws = [os.path.join(_path_raw, _f) for _f in _raws_zipped]
 
+            # output path
+            if not os.path.exists(_path_out):
+                os.makedirs(os.path.join(_path_out))
+
             ''' go off with processing '''
             # get frame size
             if 'ZNAXIS1' in self.db_entry['fits_header'][1]:
@@ -3727,10 +3731,6 @@ class KPEDRegistrationPipeline(KPEDPipeline):
                                          sepmed=True, cleantype='meanmask', fsmode='median',
                                          psfmodel='gauss', psffwhm=2.5, psfsize=7, psfk=None,
                                          psfbeta=4.765, verbose=False)[1]
-
-            # output
-            if not os.path.exists(_path_out):
-                os.makedirs(os.path.join(_path_out))
 
             # get original fits header for output
             header = self.db_entry['fits_header']
