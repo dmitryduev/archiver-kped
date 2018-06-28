@@ -1555,6 +1555,8 @@ class KPEDArchiver(Archiver):
                                 # print([re.split(pattern_fits, s)[0] for s in date_raw_data])
                                 date_obs = [re.split(pattern_fits, s)[0] for s in date_raw_data if
                                             re.search(pattern_fits, s) is not None and
+                                            re.match('bob_', s) is None and
+                                            re.match('focus_', s) is None and
                                             re.match('bias_', s) is None and
                                             re.match('dark_', s) is None and
                                             re.match('flat_', s) is None and
@@ -3762,7 +3764,7 @@ class KPEDRegistrationPipeline(KPEDPipeline):
 
             # set last_modified as summed.fits modified date:
             time_tag = datetime.datetime.utcfromtimestamp(os.stat(os.path.join(_path_out,
-                               '{:s}_summed.fits'.format(self.db_entry['_id']))).st_mtime)
+                               '{:s}_registered_sum.fits'.format(self.db_entry['_id']))).st_mtime)
             self.db_entry['pipelined'][self.name]['last_modified'] = time_tag
 
             self.db_entry['pipelined'][self.name]['location'] = _path_out
@@ -3782,7 +3784,7 @@ class KPEDRegistrationPipeline(KPEDPipeline):
         elif part == 'registration_pipeline:preview':
             # generate previews
             path_obs = os.path.join(_path_archive, self.db_entry['_id'], self.name)
-            f_fits = os.path.join(path_obs, '{:s}_summed.fits'.format(self.db_entry['_id']))
+            f_fits = os.path.join(path_obs, '{:s}_registered_sum.fits'.format(self.db_entry['_id']))
             path_out = os.path.join(path_obs, 'preview')
             self.generate_preview(f_fits=f_fits, path_obs=path_obs, path_out=path_out)
 
