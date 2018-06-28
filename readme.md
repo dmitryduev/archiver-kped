@@ -42,5 +42,5 @@ cd archiver
 docker build -t archiver-kped -f Dockerfile .
 docker run -v /path/to/raw/data:/data \
            -v /path/to/archive:/archive \
-           --name archiver-kped -d --link archiver-kped-mongo:mongo --restart always latest
+           --name archiver-kped -d --link archiver-kped-mongo:mongo --restart always archiver-kped
 ```
