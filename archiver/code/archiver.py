@@ -1446,8 +1446,8 @@ class KPEDArchiver(Archiver):
             # # science obs must start with program number (e.g. 24_ or 24.1_)
             # pattern_start = r'\d+.?\d??_'
             # must be a fpacked fits file
-            # pattern_end = r'.[0-9]{6}_0.fits.fz\Z'
-            pattern_fits = r'_0.fits.fz\Z'
+            pattern_end = r'_o.fits.fz\Z'
+            pattern_fits = r'.fits.fz\Z'
 
             while True:
 
@@ -1554,8 +1554,9 @@ class KPEDArchiver(Archiver):
                                 # skip calibration files and pointings
                                 # print([re.split(pattern_fits, s)[0] for s in date_raw_data])
                                 date_obs = [re.split(pattern_fits, s)[0] for s in date_raw_data if
-                                            re.search(pattern_fits, s) is not None and
+                                            re.search(pattern_end, s) is not None and
                                             re.match('bob_', s) is None and
+                                            re.match('test_', s) is None and
                                             re.match('focus_', s) is None and
                                             re.match('bias_', s) is None and
                                             re.match('dark_', s) is None and
