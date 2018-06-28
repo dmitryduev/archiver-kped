@@ -26,6 +26,16 @@ Copy the default calibration data over to `/path/to/archive`
 cp -r _archiver/calib /path/to/archive
 ```
 
+Create a file archiver/secrets.json with the Kowalski login credentials:
+```json
+{
+  "kowalski": {
+    "user": "USER",
+    "password": "PASSWORD"
+  }
+}
+```
+
 Bulid and launch the archiver container. Bind-mount the raw/processed data directories on the host machine:
 ```bash
 cd archiver
