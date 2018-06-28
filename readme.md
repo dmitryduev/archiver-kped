@@ -26,7 +26,7 @@ Copy the default calibration data over to `/path/to/archive`
 cp -r _archiver/calib /path/to/archive
 ```
 
-Create a file archiver/secrets.json with the Kowalski login credentials:
+Create file archiver/secrets.json with the Kowalski login credentials:
 ```json
 {
   "kowalski": {
