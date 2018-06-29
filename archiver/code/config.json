@@ -52,7 +52,7 @@
   },
 
   "parallel": {
-    "n_workers": 8,
+    "n_workers": 6,
     "threads_per_worker": 1,
     "memory_limit": 8e9,
     "silence_logs": "ERROR",
