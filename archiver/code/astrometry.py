@@ -6,8 +6,9 @@ from copy import deepcopy
 from scipy.optimize import leastsq
 from astropy.io import fits
 from astropy import wcs
+from astropy.table import Table
 import astropy.units as u
-from astropy.coordinates import SkyCoord
+from astropy.coordinates import SkyCoord, Angle
 from scipy.ndimage import gaussian_filter
 from astropy.convolution import convolve_fft
 from collections import OrderedDict
@@ -15,6 +16,10 @@ from numba import jit
 from penquins import Kowalski
 import json
 import matplotlib
+from itertools import combinations
+from scipy.spatial.distance import pdist, squareform
+from sklearn.neighbors import KDTree
+import time
 
 matplotlib.use('Qt5Agg')
 import matplotlib.pyplot as plt
@@ -26,6 +31,67 @@ np.set_printoptions(16)
 # load secrets:
 with open('/Users/dmitryduev/_caltech/python/archiver-kped/archiver/secrets.json') as sjson:
     secrets = json.load(sjson)
+
+
+def build_quad_hashes(positions):
+    """
+
+    :param positions:
+    :return:
+    """
+    hashes = []
+    hashed_quads = []
+
+    # iterate over all len(positions) choose 4 combinations of stars:
+    for quad in combinations(positions, 4):
+        # print('quad:', quad)
+        # matrix of pairwise distances in the quad:
+        distances = squareform(pdist(quad))
+        # print('distances:', distances)
+        max_distance_index = np.unravel_index(np.argmax(distances), distances.shape)
+        # print('max_distance_index:', max_distance_index)
+        # # pairs themselves:
+        # pairs = list(combinations(quad, 2))
+        # print('pairs', pairs)
+
+        # get the the far-most points:
+        # AB = pairs[int(np.argmax(distances))]
+        AB = [quad[max_distance_index[0]], quad[max_distance_index[1]]]
+        # print('AB', AB)
+
+        # compute projections:
+        Ax, Ay, Bx, By = AB[0][0], AB[0][1], AB[1][0], AB[1][1]
+        ABx = Bx - Ax
+        ABy = By - Ay
+        scale = (ABx * ABx) + (ABy * ABy)
+        invscale = 1.0 / scale
+        costheta = (ABy + ABx) * invscale
+        sintheta = (ABy - ABx) * invscale
+
+        # build hash:
+        hash = []
+
+        CD = (_p for _p in quad if _p not in AB)
+        # print(CD)
+
+        CDxy = []
+        for D in CD:
+            Dx, Dy = D[0], D[1]
+            ADx = Dx - Ax
+            ADy = Dy - Ay
+            x = ADx * costheta + ADy * sintheta
+            y = -ADx * sintheta + ADy * costheta
+            # print(x, y)
+            CDxy.append((x, y))
+        # sort by x-projection value so that Cx < Dx
+        # CDxy = sorted(CDxy)
+
+        # add to the kd-tree if Cx + Dx < 1:
+        if CDxy[0][0] + CDxy[1][0] < 1:
+            hashes.append(CDxy[0] + CDxy[1])
+            hashed_quads.append(quad)
+
+    return hashes, hashed_quads
 
 
 def generate_image(xy, mag, xy_ast=None, mag_ast=None, exp=None, nx=2048, ny=2048, psf=None):
@@ -108,7 +174,9 @@ def make_image(target, window_size, _model_psf, pix_stars, mag_stars, num_pix=10
     return sim_image
 
 
-def plot_field(target, window_size, _model_psf, grid_stars, num_pix=1024, _highlight_brighter_than_mag=None,
+def plot_field(target, window_size, _model_psf, grid_stars=None,
+               pix_stars=None, mag_stars=None,
+               num_pix=1024, _highlight_brighter_than_mag=None,
                _display_magnitude_labels=False, scale_bar=False, scale_bar_size=20,
                _display_plot=False, _save_plot=False, path='./', name='field'):
     """
@@ -121,8 +189,16 @@ def plot_field(target, window_size, _model_psf, grid_stars, num_pix=1024, _highl
     w = wcs.WCS(naxis=2)
     w._naxis1 = int(num_pix * (window_size[0] * 180.0 / np.pi * 3600) / 264)
     w._naxis2 = int(num_pix * (window_size[1] * 180.0 / np.pi * 3600) / 264)
+
+    # make even:
+    if w._naxis1 % 2:
+        w._naxis1 += 1
+    if w._naxis2 % 2:
+        w._naxis2 += 1
+
     w.naxis1 = w._naxis1
     w.naxis2 = w._naxis2
+    print(w.naxis1, w.naxis2)
 
     if w.naxis1 > 20000 or w.naxis2 > 20000:
         print('image too big to plot')
@@ -140,8 +216,10 @@ def plot_field(target, window_size, _model_psf, grid_stars, num_pix=1024, _highl
     # w.wcs.cd = np.array([[-4.9653758578816782e-06, 7.8012027500556068e-08],
     #                      [8.9799574245829621e-09, 4.8009647689165968e-06]])
     # with RA inverted to correspond to previews
-    w.wcs.cd = np.array([[4.9938707892035111e-06, 2.7601870670659687e-08],
-                         [7.7159226739276786e-09, 4.8389368351465302e-06]]) * 2
+    w.wcs.cd = np.array([[-(264. / 1024.) / 3600. * 0.999, (264. / 1024.) / 3600. * 0.002],
+                         [(264. / 1024.) / 3600. * 0.002, (264. / 1024.) / 3600. * 0.999]])
+    # w.wcs.cd = np.array([[-(264. / 1024.) / 3600. * 0.999, (264. / 1024.) / 3600. * 0.002],
+    #                      [(264. / 1024.) / 3600. * 0.002, (264. / 1024.) / 3600. * 0.999]]) * 2
     # w.wcs.cd = np.array([[5e-06, 1e-8],
     #                      [1e-8, 5e-06]]) * 2
     print(w.wcs.cd)
@@ -159,11 +237,12 @@ def plot_field(target, window_size, _model_psf, grid_stars, num_pix=1024, _highl
 
     ''' create a [fake] simulated image '''
     # apply linear transformation only:
-    pix_stars = np.array(w.wcs_world2pix(grid_stars['RA'], grid_stars['Dec'], 0)).T
+    if pix_stars is None:
+        pix_stars = np.array(w.wcs_world2pix(grid_stars['RA'], grid_stars['Dec'], 0)).T
     # apply linear + SIP:
-    # pix_stars = np.array(w.all_world2pix(grid_stars['_RAJ2000'], grid_stars['_DEJ2000'], 0)).T
     # pix_stars = np.array(w.all_world2pix(grid_stars['RA'], grid_stars['Dec'], 0)).T
-    mag_stars = np.array(grid_stars['mag'])
+    if mag_stars is None:
+        mag_stars = np.array(grid_stars['mag'])
     # print(pix_stars)
     # print(mag_stars)
 
@@ -193,14 +272,14 @@ def plot_field(target, window_size, _model_psf, grid_stars, num_pix=1024, _highl
 
     ''' display field '''
     # fig.show_colorscale(cmap='viridis')
-    fig.show_colorscale(cmap='magma')
+    fig.show_colorscale(cmap='magma', stretch='sqrt')
     # fig.show_grayscale()
     # fig.show_markers(grid_stars[cat]['_RAJ2000'], grid_stars[cat]['_DEJ2000'],
     #                  layer='marker_set_1', edgecolor='white',
     #                  facecolor='white', marker='o', s=30, alpha=0.7)
 
     # highlight stars bright enough to serve as tip-tilt guide stars:
-    if _highlight_brighter_than_mag is not None:
+    if _highlight_brighter_than_mag is not None and grid_stars is not None:
         mask_bright = mag_stars <= float(_highlight_brighter_than_mag)
         if np.max(mask_bright) == 1:
             fig.show_markers(grid_stars[mask_bright]['RA'], grid_stars[mask_bright]['Dec'],
@@ -208,7 +287,7 @@ def plot_field(target, window_size, _model_psf, grid_stars, num_pix=1024, _highl
                              facecolor=plt.cm.Oranges(0.8), marker='+', s=50, alpha=0.9, linewidths=1)
 
     # show labels with magnitudes
-    if _display_magnitude_labels:
+    if _display_magnitude_labels and grid_stars is not None:
         for star in grid_stars:
             fig.add_label(star['RA'], star['Dec'], '{:.1f}'.format(star['mag']),
                           color=plt.cm.Oranges(0.4), horizontalalignment='right')
@@ -550,7 +629,8 @@ if __name__ == '__main__':
     # ax.imshow(preview_img, cmap=plt.cm.magma, origin='lower', interpolation='nearest')
 
     preview_img_zerod = preview_img
-    preview_img_zerod[preview_img_zerod < 0] = 0
+    preview_img_zerod[preview_img_zerod < np.median(np.median(preview_img_zerod))*0.5] = 0.01
+    # preview_img_zerod += np.min(preview_img_zerod) + 0.01
     ax.imshow(np.sqrt(np.sqrt(preview_img_zerod)), cmap=plt.cm.magma, origin='lower', interpolation='nearest')
     # ax.imshow(np.log(preview_img_zerod), cmap=plt.cm.magma, origin='lower', interpolation='nearest')
 
@@ -565,41 +645,66 @@ if __name__ == '__main__':
     #     os.makedirs(_path_out)
     # plt.savefig(os.path.join(_path_out, fname_full), dpi=300)
 
-    plt.show()
+    # plt.show()
 
     ''' get stars from Gaia DR2 catalogue, create fake images, then cross correlate them '''
     # stars in the field (without mag cut-off):
     # star_sc = SkyCoord(ra=header['TELRA'][0], dec=header['TELDEC'][0],
     #                    unit=(u.hourangle, u.deg), frame='icrs')
-    star_sc = SkyCoord(ra='12:26:54.24', dec='+32:01:51.24', unit=(u.hourangle, u.deg), frame='icrs')
+    star_sc = SkyCoord(ra='19:49:01.39', dec='+67:30:05.6', unit=(u.hourangle, u.deg), frame='icrs')
     print('nominal FoV center', star_sc)
+    # print(star_sc.ra.deg, star_sc.dec.deg)
 
     # solved for:
-    star_sc = SkyCoord(ra=186.726, dec=32.0309, unit=(u.deg, u.deg), frame='icrs')
+    star_sc = SkyCoord(ra=297.25579166666665, dec=67.50155555555556, unit=(u.deg, u.deg), frame='icrs')
 
-    # search radius: " -> rad
-    fov_size_ref = 400 * np.pi / 180.0 / 3600
+    # search radius*2: " -> rad
+    fov_size_ref_arcsec = 400
+    fov_size_ref = fov_size_ref_arcsec * np.pi / 180.0 / 3600
 
     # query Kowalski for Gaia stars:
     with Kowalski(username=secrets['kowalski']['user'], password=secrets['kowalski']['password']) as kowalski:
+        # if False:
         q = {"query_type": "cone_search",
              "object_coordinates": {"radec": f"[({star_sc.ra.deg}, {star_sc.dec.deg})]",
-                                    "cone_search_radius": "400",
+                                    "cone_search_radius": str(fov_size_ref_arcsec/2),
                                     "cone_search_unit": "arcsec"},
-         "catalogs": {"Gaia_DR2": {"filter": {},
-                                   "projection": {"_id": 0, "source_id": 1, "ra": 1, "dec": 1, "phot_g_mean_mag": 1}}}
-         }
+             "catalogs": {"Gaia_DR2": {"filter": {},
+                                       "projection": {"_id": 0, "source_id": 1,
+                                                      "ra": 1, "dec": 1, "ra_error": 1, "dec_error": 1,
+                                                      "phot_g_mean_mag": 1}}}
+             }
         r = kowalski.query(query=q, timeout=10)
         key = list(r['result']['Gaia_DR2'].keys())[0]
         fov_stars = r['result']['Gaia_DR2'][key]
+
+        # # for a box query, must specify bottom left and upper right corner:
+        # bottom_left_ra = (star_sc.ra - Angle(fov_size_ref / 2 * u.rad)).deg
+        # bottom_left_dec = (star_sc.dec - Angle(fov_size_ref / 2 * u.rad)).deg
+        # upper_right_ra = (star_sc.ra + Angle(fov_size_ref / 2 * u.rad)).deg
+        # upper_right_dec = (star_sc.dec + Angle(fov_size_ref / 2 * u.rad)).deg
+        #
+        # q = {"query_type": "general_search",
+        #      "query": "db['Gaia_DR2'].find({{'coordinates.radec_geojson': {{'$geoWithin': {{ '$box': [[{:f} - 180.0, {:f}], [{:f} - 180.0, {:f}]] }}}}}}, {{'_id': 0, 'source_id': 1, 'ra': 1, 'dec': 1, 'ra_error': 1, 'dec_error': 1, 'phot_g_mean_mag': 1}})".format(bottom_left_ra, bottom_left_dec, upper_right_ra, upper_right_dec)
+        #      }
+        # print(q)
+        # r = kowalski.query(query=q, timeout=10)
+        # print(r)
+
         # print(fov_stars)
+
+    # convert to astropy table:
+    fov_stars = np.array([[fov_star['source_id'], fov_star['ra'], fov_star['dec'],
+                           fov_star['ra_error'], fov_star['dec_error'], fov_star['phot_g_mean_mag']]
+                          for fov_star in fov_stars])
+    fov_stars = Table(fov_stars, names=('source_id', 'RA', 'Dec', 'e_RA', 'e_Dec', 'mag'))
+    print(fov_stars)
 
     pix_ref, mag_ref = plot_field(target=star_sc, window_size=[fov_size_ref, fov_size_ref], _model_psf=None,
                                   grid_stars=fov_stars, num_pix=preview_img.shape[0], _highlight_brighter_than_mag=None,
                                   scale_bar=False, scale_bar_size=20, _display_plot=False, _save_plot=False,
                                   path='./', name='field')
-    if False:
-        print(pix_ref)
+    # print(pix_ref)
 
     # brightest 20:
     # tic = _time()
@@ -609,25 +714,72 @@ if __name__ == '__main__':
     # print(len(quads_detected), len(quads_reference))
 
     ''' detect shift '''
-    fov_size_det = 36 * np.pi / 180.0 / 3600
-    mag_det /= np.max(mag_det)
+    fov_size_det = 264 * np.pi / 180.0 / 3600
+    mag_det /= np.median(mag_det)
     mag_det = -2.5 * np.log10(mag_det)
-    # add (pretty arbitrary) baseline
-    mag_det += np.min(mag_ref)
+    # add (pretty arbitrary) baseline from ref
+    mag_det += np.median(mag_ref)
+    # mag_det += np.max(mag_ref)
     # print(mag_det)
+
+    # plot_field detected:
+    _, _ = plot_field(target=star_sc, window_size=[fov_size_det, fov_size_det], _model_psf=None,
+                      grid_stars=None, pix_stars=pix_det, mag_stars=mag_det,
+                      num_pix=preview_img.shape[0], _highlight_brighter_than_mag=None,
+                      scale_bar=False, scale_bar_size=20, _display_plot=False, _save_plot=False,
+                      path='./', name='field')
+
+    ''' try astrometry.net-like approach '''
+    # TODO
+    if False:
+        # detected:
+        pix = [(_p[0], _p[1]) for _p in pix_det]
+        # dump to file:
+        with open('pix_det.txt', 'w') as f:
+            for _p in pix:
+                f.write(f'{_p}\n')
+        tic = time.time()
+        hashes_det, hashed_quads_det = build_quad_hashes(pix)
+        print(f'Building hashes for {len(pix)} detected sources took {time.time()-tic} seconds.')
+        # print('hashes:\n', hashes_det)
+        # print('hashed quads:\n', hashed_quads_det)
+        print('number of valid hashes for detected sources:', len(hashes_det))
+
+        # reference:
+        pix = [(_p[0], _p[1]) for _p in pix_ref[:100]]
+        # dump to file:
+        with open('pix_ref.txt', 'w') as f:
+            for _p in pix:
+                f.write(f'{_p}\n')
+        tic = time.time()
+        hashes_ref, hashed_quads_ref = build_quad_hashes(pix)
+        print(f'Building hashes for {len(pix)} reference sources took {time.time()-tic} seconds.')
+        # print('hashes:\n', hashes_ref)
+        # print('hashed quads:\n', hashed_quads_ref)
+        print('number of valid hashes for reference sources:', len(hashes_ref))
+
+        raise Exception('stop!')
 
     # detected = make_image(target=star_sc, window_size=[fov_size_det, fov_size_det], _model_psf=None,
     #                       pix_stars=pix_det, mag_stars=mag_det)
-    naxis_det = int(preview_img.shape[0] * (fov_size_det * 180.0 / np.pi * 3600) / 36)
-    naxis_ref = int(preview_img.shape[0] * (fov_size_ref * 180.0 / np.pi * 3600) / 36)
-    if False:
-        print(naxis_det, naxis_ref)
+    naxis_det = int(preview_img.shape[0] * (fov_size_det * 180.0 / np.pi * 3600) / 264)
+    naxis_ref = int(preview_img.shape[0] * (fov_size_ref * 180.0 / np.pi * 3600) / 264)
+    print(naxis_det, naxis_ref)
     # effectively shift detected positions to center of ref frame to reduce distortion effect
     pix_det_ref = pix_det + np.array([naxis_ref // 2, naxis_ref // 2]) - np.array([naxis_det // 2, naxis_det // 2])
+    # pix_det_ref = pix_det
     detected = make_image(target=star_sc, window_size=[fov_size_ref, fov_size_ref], _model_psf=None,
                           pix_stars=pix_det_ref, mag_stars=mag_det, num_pix=preview_img.shape[0])
     reference = make_image(target=star_sc, window_size=[fov_size_ref, fov_size_ref], _model_psf=None,
                            pix_stars=pix_ref, mag_stars=mag_ref, num_pix=preview_img.shape[0])
+
+    detected[detected == 0] = 0.0001
+    detected[np.isnan(detected)] = 0.0001
+    detected = np.log(detected)
+
+    reference[reference == 0] = 0.0001
+    reference[np.isnan(reference)] = 0.0001
+    reference = np.log(reference)
 
     # register shift: pixel precision first
     from skimage.feature import register_translation
@@ -644,12 +796,12 @@ if __name__ == '__main__':
         s_shifted = s + np.array(shift[::-1])
 
         pix_distance = np.min(np.linalg.norm(pix_ref - s_shifted, axis=1))
-        if False:
+        if True:
             print(pix_distance)
 
         # note: because of larger distortion in the y-direction, pix diff there is larger than in x
         # if pix_distance < 25 * preview_img.shape[0] / 1024:  # 25:
-        if pix_distance < 20:
+        if pix_distance < 10:
             min_ind = np.argmin(np.linalg.norm(pix_ref - s_shifted, axis=1))
 
             # note: errors in Gaia position are given in mas, so convert to deg by  / 1e3 / 3600
@@ -668,38 +820,6 @@ if __name__ == '__main__':
         print(matched)
     print('total matched:', len(matched))
 
-    ''' try BRIEF matching '''
-    if False:
-        from skimage.feature import (match_descriptors, corner_peaks, corner_harris,
-                                     plot_matches, BRIEF, blob_log)
-
-        keypoints1 = corner_peaks(corner_harris(detected), min_distance=5)
-        print(keypoints1.shape)
-        print(keypoints1)
-        # keypoints2 = corner_peaks(corner_harris(reference), min_distance=5)
-        keypoints1 = blob_log(detected, max_sigma=30, num_sigma=10, threshold=.1)
-        print(keypoints1.shape)
-        print(keypoints1)
-        keypoints2 = blob_log(reference, max_sigma=30, num_sigma=10, threshold=.1)
-
-        extractor = BRIEF()
-
-        extractor.extract(detected, keypoints1)
-        keypoints1 = keypoints1[extractor.mask]
-        descriptors1 = extractor.descriptors
-
-        extractor.extract(reference, keypoints2)
-        keypoints2 = keypoints2[extractor.mask]
-        descriptors2 = extractor.descriptors
-
-        matches12 = match_descriptors(descriptors1, descriptors2, cross_check=True)
-
-        fig = plt.figure('BRIEF matches')
-        ax = fig.add_subplot(111)
-        plot_matches(ax, detected, reference, keypoints1, keypoints2, matches12)
-        ax.axis('off')
-        ax.set_title("Detected vs Reference")
-
     ''' plot fake images used to detect shift '''
     fig = plt.figure('fake detected')
     fig.set_size_inches(4, 4, forward=False)
@@ -709,7 +829,7 @@ if __name__ == '__main__':
     ax.imshow(scale_image(detected, correction='local'), cmap=plt.cm.magma, origin='lower', interpolation='nearest')
 
     # apply shift:
-    if False:
+    if True:
         import multiprocessing
 
         _nthreads = multiprocessing.cpu_count()
@@ -736,6 +856,8 @@ if __name__ == '__main__':
                                           scale_bar_size=20, _display_plot=False, _save_plot=False,
                                           path='./', name='field')
 
+    plt.show()
+
     ''' solve field '''
     # plt.show()
     # a priori RA/Dec positions:
@@ -752,10 +874,10 @@ if __name__ == '__main__':
     #                1e-6, 1e-6, 1e-5,
     #                1e-6, 1e-6, 1e-5])
     p0 = np.array([star_sc.ra.deg, star_sc.dec.deg,
-                   -1. / (0.017 / 3600. * 0.999),
-                   1. / (0.017 / 3600. * 0.002),
-                   1. / (0.017 / 3600. * 0.002),
-                   1. / (0.017 / 3600. * 0.999),
+                   -1. / ((264./1024.) / 3600. * 0.999),
+                   1. / ((264./1024.) / 3600. * 0.002),
+                   1. / ((264./1024.) / 3600. * 0.002),
+                   1. / ((264./1024.) / 3600. * 0.999),
                    1e-7, 1e-7, 1e-7, 1e-7, 1e-7,
                    1e-2, 1e-5, 1e-7, 1e-7, 1e-5])
     # np.array(preview_img.shape[0]) / 2.0, np.array(preview_img.shape[1]) / 2.0])
@@ -1147,55 +1269,5 @@ if __name__ == '__main__':
     # plt.axis([vu.min(), vu.max(), vv.min(), vv.max()])
     ax4.imshow(np.sqrt(np.sqrt(preview_img_no_distortion)), cmap=plt.cm.magma, origin='lower', interpolation='nearest')
     ax.axis('off')
-
-    '''
-    # pyBA will be useful when analysing night-to-night data with an established distortion solution,
-    # but likely not the initial mapping image plane -> sky
-    '''
-    if False:
-        import pyBA
-
-        # measured CCD positions centered around zero:
-        objectsA = np.array([pyBA.Bivarg(mu=ix[0:2] - preview_img.shape, sigma=ix[2:5]) for ix in matched])
-        # objectsA = np.array([pyBA.Bivarg(mu=ix[0:2], sigma=ix[2:5]) for ix in matched])
-        objectsB = np.array([pyBA.Bivarg(mu=ix[5:7], sigma=ix[7:10]) for ix in matched])
-        # print(objectsA)
-        # print(objectsB)
-
-        S = pyBA.background.suggest_mapping(objectsA, objectsB)
-        print('\napriori mapping:')
-        print(S.mu)
-        # print(S.sigma)
-
-        # Get maximum a posteriori background mapping parameters
-        P = pyBA.background.MAP(objectsA, objectsB, mu0=S.mu, prior=pyBA.Bgmap(), norm_approx=True)
-        print('\naposteriori mapping:')
-        print(P.mu)
-        # print(P.sigma)
-
-        # Create astrometric mapping object
-        D = pyBA.Amap(P, objectsA, objectsB)
-        # D.scale = 100
-        nres = 30  # Density of interpolation grid points
-        # D.condition()
-
-        from pyBA.plotting import make_grid
-        from pyBA.distortion import realise, d2, astrometry_cov
-
-        x, y = make_grid(objectsA, res=nres)
-        xyarr = np.array([x.flatten(), y.flatten()]).T
-
-        # vx, vy = realise(xyarr, D.P, D.scale, D.amp)
-        d2_grid = d2(xyarr, xyarr)
-        C = astrometry_cov(d2_grid, D.scale, D.amp)
-
-        # Show mean function (the background transformation)
-        # D.draw_background(res=nres)
-
-        # Plot residuals
-        # D.draw_residuals(res=nres)
-
-        # Draw realisation of distortion map after observation
-        # D.draw_realisation(res=nres)
 
     plt.show()
