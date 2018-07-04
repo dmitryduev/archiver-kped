@@ -108,6 +108,7 @@ if __name__ == '__main__':
     # print(np.min())
     results = []
     for ih, h in enumerate(hashes_det):
+        # find nearest neighbor of a detected hash in the reference tree
         dist, ind = tree.query([h], k=1)
         print(ih, dist, ind)
         results.append([ih, dist[0][0], ind[0][0]])

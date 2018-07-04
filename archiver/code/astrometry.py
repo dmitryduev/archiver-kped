@@ -934,24 +934,18 @@ if __name__ == '__main__':
 
     # initial parameters of the linear transform + distortion:
     # p0 = np.array([star_sc.ra.deg, star_sc.dec.deg,
-    #                1. / (0.017 / 3600. * 0.999),
-    #                -1. / (0.017 / 3600. * 0.002),
-    #                1. / (0.017 / 3600. * 0.002),
-    #                1. / (0.017 / 3600. * 0.999),
-    #                1e-6, 1e-6, 1e-5,
-    #                1e-6, 1e-6, 1e-5])
-    # p0 = np.array([star_sc.ra.deg, star_sc.dec.deg,
     #                -1. / ((264. / 1024.) / 3600. * 0.999),
     #                1. / ((264. / 1024.) / 3600. * 0.002),
     #                1. / ((264. / 1024.) / 3600. * 0.002),
     #                1. / ((264. / 1024.) / 3600. * 0.999),
     #                1e-7, 1e-7, 1e-7, 1e-7, 1e-7,
     #                1e-2, 1e-5, 1e-7, 1e-7, 1e-5])
+    # initial parameters of the linear transform:
     p0 = np.array([star_sc.ra.deg, star_sc.dec.deg,
-                   -1. / ((264. / 1024.) / 3600. * 0.999),
-                   1. / ((264. / 1024.) / 3600. * 0.002),
-                   1. / ((264. / 1024.) / 3600. * 0.002),
-                   1. / ((264. / 1024.) / 3600. * 0.999)])
+                   -1. / ((264. / 1024.) / 3600.) * 0.999,
+                   1. / ((264. / 1024.) / 3600.) * 0.002,
+                   1. / ((264. / 1024.) / 3600.) * 0.002,
+                   1. / ((264. / 1024.) / 3600.) * 0.999])
 
     ''' estimate linear transform parameters + 2nd order distortion '''
     # TODO: add weights depending on sextractor error?
@@ -1051,6 +1045,10 @@ if __name__ == '__main__':
     fov_center = SkyCoord(ra=plsq[0][0], dec=plsq[0][1], unit=(u.deg, u.deg), frame='icrs')
     detected_solution = make_image(target=fov_center, window_size=[fov_size_det, fov_size_det], _model_psf=None,
                                    pix_stars=pix_det, mag_stars=mag_det, num_pix=preview_img.shape[0])
+    detected_solution[detected_solution == 0] = 0.0001
+    detected_solution[np.isnan(detected_solution)] = 0.0001
+    detected_solution = np.log(detected_solution)
+
     fig = plt.figure('detected stars')
     fig.set_size_inches(4, 4, forward=False)
     ax = plt.Axes(fig, [0., 0., 1., 1.])

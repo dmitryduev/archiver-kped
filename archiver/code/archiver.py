@@ -3670,13 +3670,6 @@ class KPEDRegistrationPipeline(KPEDPipeline):
             nthreads = self.config['pipeline'][self.name]['n_threads']
             fftn, ifftn = image_registration.fft_tools.fast_ffts.get_ffts(nthreads=nthreads, use_numpy_fft=False)
 
-            # prepare a fits file to write registered files to:
-            path_registered_stack = os.path.join(_path_out, self.db_entry['_id'] + '_registered.fits')
-            with fits.open(raws[0], memmap=True) as _hdulist:
-                hdu = fits.PrimaryHDU(header=_hdulist[0].header)
-                hdulist = fits.HDUList([hdu])
-                hdulist.writeto(path_registered_stack, overwrite=True)
-
             if _v:
                 bar = pyprind.ProgBar(numFrames, stream=1, title='Registering frames')
 
@@ -3684,6 +3677,14 @@ class KPEDRegistrationPipeline(KPEDPipeline):
             # from time import time as _time
             # sort raws properly: '1', '2', ... '10' etc!
             for jj, _file in enumerate(sort_raws(raws)):
+
+                # prepare a fits file to write registered frames from jj-th file to:
+                path_registered_stack = os.path.join(_path_out, self.db_entry['_id'] +
+                                                     '_registered_{:04d}.fits'.format(jj))
+                with fits.open(raws[0], memmap=True) as _hdulist:
+                    hdu = fits.PrimaryHDU(header=_hdulist[0].header)
+                    hdulist_registered = fits.HDUList([hdu])
+
                 with fits.open(_file, memmap=True)[1:] as _hdulist:
                     # frames_before = sum(n_frames_files[:jj])
                     for ii, _ in enumerate(_hdulist):
@@ -3723,7 +3724,7 @@ class KPEDRegistrationPipeline(KPEDPipeline):
                         else:
                             img = self.shift2d(fftn, ifftn, image_registration.fft_tools.upsample_image(img,
                                                                                    upsample_factor=_upsampling_factor),
-                                          -dy2, -dx2, xfreq_0, yfreq_0)
+                                               -dy2, -dx2, xfreq_0, yfreq_0)
                         # print(_time() - tic, '\n')
 
                         # if np.sqrt(dx2 ** 2 + dy2 ** 2) > 0.8 * _win \
@@ -3739,13 +3740,18 @@ class KPEDRegistrationPipeline(KPEDPipeline):
                             shifts[fn, :] = [fn, -dx2, -dy2, edx2, edy2]
                             summed_frame += img
                             # also, append to the '_registered' file:
-                            fits.append(path_registered_stack, img, _hdulist[ii].header)
+                            # fits.append(path_registered_stack, img, _hdulist[ii].header)
+                            hdu = fits.PrimaryHDU(data=img, header=_hdulist[ii].header)
+                            hdulist_registered.append(hdu)
 
                         if _v:
                             bar.update()
 
                         # increment frame number
                         fn += 1
+
+                # save _registered:
+                hdulist_registered.writeto(path_registered_stack, overwrite=True)
 
             if _v:
                 print('Largest move was {:.2f} pixels for frame {:d}'.
