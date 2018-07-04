@@ -1054,6 +1054,9 @@ class KPEDArchiver(Archiver):
         # will exit if this fails
         self.connect_to_db()
 
+        ''' clean db '''
+        self.clean_db()
+
     def init_db(self):
         """
             Initialize db if new Mongo instance
@@ -1076,6 +1079,18 @@ class KPEDArchiver(Archiver):
             _client[db_name].command('createUser', self.config['database']['user'],
                                      pwd=self.config['database']['pwd'], roles=['readWrite'])
             print('Successfully initialized db')
+
+    def clean_db(self):
+        """
+            Resolve status issues
+        :return:
+        """
+        _enqueued = self.db['coll_obs'].find({'pipelined.registration.status.enqueued': True}, {'_id': 1})
+        for _obs in _enqueued:
+            db_record_update = ({'_id': _obs['_id']},
+                                {'$set': {'pipelined.registration.status.enqueued': False,
+                                          'pipelined.registration.last_modified': utc_now()}})
+            self.update_db_entry(_collection='coll_obs', upd=db_record_update)
 
     def harvester(self):
         """

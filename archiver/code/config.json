@@ -52,9 +52,9 @@
   },
 
   "parallel": {
-    "n_workers": 6,
+    "n_workers": 4,
     "threads_per_worker": 1,
-    "memory_limit": 8e9,
+    "memory_limit": 12e9,
     "silence_logs": "ERROR",
 
     "help": {
