@@ -875,12 +875,14 @@ def astrometry(_obs, _config):
                                                 fov_stars['Dec'][min_ind],
                                                 fov_stars['e_RA'][min_ind] / 1e3 / 3600,
                                                 fov_stars['e_Dec'][min_ind] / 1e3 / 3600,
-                                                0.0])]))
+                                                fov_stars['mag'][min_ind],
+                                                fov_stars['source_id'][min_ind]])]))
             # fov_stars['RADEcor'][min_ind]])]))
             mask_matched.append(min_ind)
 
     matched = np.array(matched)
     if _config['pipeline']['astrometry']['verbose']:
+        # print(matched)
         print('total matched:', len(matched))
 
     ''' plot and save fake images used to detect shift '''
@@ -924,6 +926,9 @@ def astrometry(_obs, _config):
     ''' solve field '''
     # a priori RA/Dec positions:
     X = matched[:, 5:7]
+    # Gaia source ids and mags for bookkeeping/final matches:
+    source_ids = matched[:, -1]
+    source_mags = matched[:, -2]
     # measured CCD positions centered around zero:
     Y = matched[:, 0:2] - (np.array(preview_img.shape) / 2.0)
 
@@ -967,6 +972,8 @@ def astrometry(_obs, _config):
         # flag:
         X = X[mask_outliers, :]
         Y = Y[mask_outliers, :]
+        source_ids = source_ids[mask_outliers]
+        source_mags = source_mags[mask_outliers]
 
         # plsq = leastsq(residual, p0, args=(Y, X), ftol=1.49012e-13, xtol=1.49012e-13, full_output=True)
         plsq = leastsq(residual, plsq[0], args=(Y, X), ftol=1.49012e-13, xtol=1.49012e-13, full_output=True)
@@ -1041,6 +1048,15 @@ def astrometry(_obs, _config):
         print('image size for mean pixel scale: {:.4f}\" x {:.4f}\"'.format(size, size))
         print('image size: {:.4f}\" x {:.4f}\"'.format(abs(R[0, 0]) * 3600 * preview_img.shape[0],
                                                        abs(R[1, 1]) * 3600 * preview_img.shape[1]))
+
+    ''' matches: '''
+    # Gaia_DR2_source_id Gaia_DR2_source_G_mag Gaia_DR2_ra_dec ccd_pixel_positions
+    matched_sources = np.hstack((np.expand_dims(source_ids, axis=1),
+                                 np.expand_dims(source_mags, axis=1),
+                                 X, Y + (np.array(preview_img.shape) / 2.0)))
+    if _config['pipeline']['astrometry']['verbose']:
+        print('Matched sources with Gaia DR2:')
+        print(matched_sources)
 
     ''' test the solution '''
     fov_center = SkyCoord(ra=plsq[0][0], dec=plsq[0][1], unit=(u.deg, u.deg), frame='icrs')

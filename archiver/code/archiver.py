@@ -3999,8 +3999,12 @@ class KPEDAstrometryPipeline(KPEDPipeline):
         """
         assert part is not None, 'must specify what to check'
 
-        # check the AP itself?
+        # Run the AP itself?
         if part == 'astrometry_pipeline':
+
+            # registration pipeline done and successful
+            # pipeline done?
+            _registration_done = self.db_entry['pipelined']['registration']['status']['done']
 
             # force redo requested?
             _force_redo = self.db_entry['pipelined'][self.name]['status']['force_redo']
@@ -4009,28 +4013,31 @@ class KPEDAstrometryPipeline(KPEDPipeline):
             # how many times tried?
             _num_tries = self.db_entry['pipelined'][self.name]['status']['retries']
 
-            go = (_force_redo or ((not _done) and (_num_tries <= self.config['misc']['max_retries'])))
+            go = (_force_redo or (_registration_done and
+                                  (not _done) and (_num_tries <= self.config['misc']['max_retries'])))
 
             return go
 
         # Preview generation for the results of AP processing?
         elif part == 'astrometry_pipeline:preview':
 
-            # pipeline done?
-            _pipe_done = self.db_entry['pipelined'][self.name]['status']['done']
+            # # pipeline done?
+            # _pipe_done = self.db_entry['pipelined'][self.name]['status']['done']
+            #
+            # # preview generated?
+            # _preview_done = self.db_entry['pipelined'][self.name]['preview']['done']
+            #
+            # # last_modified == pipe_last_modified?
+            # _outdated = abs((self.db_entry['pipelined'][self.name]['preview']['last_modified'] -
+            #                  self.db_entry['pipelined'][self.name]['last_modified']).total_seconds()) > 5.0
+            #
+            # # how many times tried?
+            # _num_tries = self.db_entry['pipelined'][self.name]['preview']['retries']
+            #
+            # go = _pipe_done and ((not _preview_done) or _outdated) \
+            #      and (_num_tries <= self.config['misc']['max_retries'])
 
-            # preview generated?
-            _preview_done = self.db_entry['pipelined'][self.name]['preview']['done']
-
-            # last_modified == pipe_last_modified?
-            _outdated = abs((self.db_entry['pipelined'][self.name]['preview']['last_modified'] -
-                             self.db_entry['pipelined'][self.name]['last_modified']).total_seconds()) > 5.0
-
-            # how many times tried?
-            _num_tries = self.db_entry['pipelined'][self.name]['preview']['retries']
-
-            go = _pipe_done and ((not _preview_done) or _outdated) \
-                 and (_num_tries <= self.config['misc']['max_retries'])
+            go = False
 
             return go
 
@@ -4052,8 +4059,27 @@ class KPEDAstrometryPipeline(KPEDPipeline):
                 'last_modified': time_now_utc
             },
             'location': [],
-            'astrometric_solution': None,
-            'matches': None
+            'bootstrapped_solution': None,
+            'bootstrapped_solution_error': None,
+            'residuals': None,
+            'matches': None,
+            'astrometric_solution': {
+                'M': None,
+                'M_m1': None,
+                'tangent_point_sky': None,
+                'tangent_point_pix': None,
+                'rotatioin_angle': None,
+                'pixel_scale': {
+                    'mean': None,
+                    'x': None,
+                    'y': None
+                },
+                'image_size': {
+                    'mean': None,
+                    'x': None,
+                    'y': None
+                }
+            }
         }
 
     def generate_preview(self):
@@ -4074,14 +4100,14 @@ class KPEDAstrometryPipeline(KPEDPipeline):
         # UTC date of obs:
         _date = self.db_entry['date_utc'].strftime('%Y%m%d')
 
-        # path to store unzipped raw files
-        _path_tmp = self.config['path']['path_tmp']
         # path to archive:
         _path_archive = os.path.join(self.config['path']['path_archive'], _date)
         # path to output:
         _path_out = os.path.join(_path_archive, self.db_entry['_id'], self.name)
 
         if part == 'astrometry_pipeline':
+
+
 
             # reduction successful? prepare db entry for update
             self.db_entry['pipelined'][self.name]['status']['done'] = True
@@ -4098,33 +4124,10 @@ class KPEDAstrometryPipeline(KPEDPipeline):
 
             # TODO:
             self.db_entry['pipelined'][self.name]['astrometric_solution'] = None
-
             self.db_entry['pipelined'][self.name]['matches'] = None
-
-            # for _file in raws:
-            #     if _v:
-            #         print('removing', _file)
-            #     os.remove(os.path.join(_file))
 
         elif part == 'astrometry_pipeline:preview':
             raise NotImplementedError()
-
-    @staticmethod
-    def calibrate_frame(im, _dark, _flat, _iter=3):
-        im_BKGD = deepcopy(im)
-        for j in range(int(_iter)):  # do 3 iterations of sigma-clipping
-            try:
-                temp = sigmaclip(im_BKGD, 3.0, 3.0)
-                im_BKGD = temp[0]  # return arr is 1st element
-            except Exception as _e:
-                print(_e)
-                pass
-        sum_BKGD = np.mean(im_BKGD)  # average CCD BKGD
-        im -= sum_BKGD
-        im -= _dark
-        im /= _flat
-
-        return im
 
 
 def job_astrometry_pipeline(_id=None, _config=None, _db_entry=None, _task_hash=None):
@@ -4165,7 +4168,6 @@ def job_astrometry_pipeline(_id=None, _config=None, _db_entry=None, _task_hash=N
                                      }}
                                      )
                 }
-
 
 
 if __name__ == '__main__':
