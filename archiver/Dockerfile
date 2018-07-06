@@ -25,6 +25,9 @@ COPY secrets.json /app/
 RUN mkdir -p /archive/calib
 ADD _archive/calib/ /archive/calib/
 
+# get list of observed targets from Michael's github:
+ADD https://raw.githubusercontent.com/mcoughlin/kp84/master/input/observed.dat /archive/
+
 # copy over the code
 ADD code/ /app/
 

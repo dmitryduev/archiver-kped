@@ -160,12 +160,22 @@
         "sexpath": "sextractor"
       },
       "vignetting_cutoff": 0.98,
+      "fov_center": "starlist",
+      "reference_win_size": 400.0,
+      "max_pix_distance_for_match": 10,
+      "outlier_flagging_passes": 2,
+      "outlier_pix": 5,
       "verbose": true,
 
       "help": {
         "self": "astrometry pipeline",
         "sextractor_settings": "SExtractor settings",
         "vignetting_cutoff": "ignore sextracted sources if pix value on flat field for filter is below this",
+        "fov_center": "'starlist' to use starlist from Michael's Github or 'telescope' to use FITS header",
+        "reference_win_size": "Window size in arcsec for querying reference catalog",
+        "max_pix_distance_for_match": "maximum distance in pix to associate detected and reference sources",
+        "outlier_flagging_passes": "number of passes to flag outliers and refit the astrometric solution",
+        "outlier_pix": "mark source as outlier if post-fit residual greater than this value in pix",
         "verbose": "vocalize what's happening?"
       }
     },

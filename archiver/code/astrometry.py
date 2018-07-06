@@ -1,6 +1,7 @@
 import inspect
 
 import sewpy
+import multiprocessing
 import numpy as np
 import os
 import datetime
@@ -28,6 +29,7 @@ matplotlib.use('Qt5Agg')
 import matplotlib.pyplot as plt
 import aplpy
 import image_registration
+from skimage.feature import register_translation
 
 np.set_printoptions(16)
 
@@ -326,12 +328,17 @@ def get_fits_header(fits_file):
     """
     # read fits:
     with fits.open(os.path.join(fits_file)) as hdulist:
-        # header:
-        header = OrderedDict()
-        for _entry in hdulist[0].header.cards:
-            header[_entry[0]] = _entry[1:]
+        # header(s):
 
-    return header
+        header_0 = OrderedDict()
+        for _entry in hdulist[0].header.cards:
+            header_0[_entry[0]] = _entry[1:]
+
+        header_1 = OrderedDict()
+        for _entry in hdulist[1].header.cards:
+            header_1[_entry[0]] = _entry[1:]
+
+    return header_0, header_1
 
 
 def load_fits(fin, return_header=False):
@@ -541,7 +548,7 @@ def compute_detector_position(p, x, quadratic=False):
     # print('UV: ', UV)
 
     M_m1 = np.matrix([[p[2], p[3]], [p[4], p[5]]])
-    # M = np.linalg.pinv(M_m1)
+    M = np.linalg.pinv(M_m1)
     # print(M)
 
     x_tan = M * np.array([[p[0]], [p[1]]])
@@ -643,6 +650,47 @@ def get_config(_config_file):
             raise Exception('Failed to load config file')
 
 
+def parse_observed_dat(_fin):
+    with open(_fin) as _f:
+        _f_lines = _f.readlines()
+
+    _sources = dict()
+    for _l in _f_lines:
+        _tmp = _l.split()
+        _sources[_tmp[0]] = list(map(float, _tmp[1:]))
+
+    return _sources
+
+
+def query_reference_catalog(_star_sc, _fov_size_ref_arcsec, retries=3):
+
+    for ir in range(retries):
+        try:
+            print(f'Querying Kowalski, attempt {ir+1}')
+            # query Kowalski for Gaia stars:
+            with Kowalski(username=secrets['kowalski']['user'], password=secrets['kowalski']['password']) as kowalski:
+                # if False:
+                q = {"query_type": "cone_search",
+                     "object_coordinates": {"radec": f"[({_star_sc.ra.deg}, {_star_sc.dec.deg})]",
+                                            "cone_search_radius": str(_fov_size_ref_arcsec / 2),
+                                            "cone_search_unit": "arcsec"},
+                     "catalogs": {"Gaia_DR2": {"filter": {},
+                                               "projection": {"_id": 0, "source_id": 1,
+                                                              "ra": 1, "dec": 1, "ra_error": 1, "dec_error": 1,
+                                                              "phot_g_mean_mag": 1}}}
+                     }
+                r = kowalski.query(query=q, timeout=10)
+                key = list(r['result']['Gaia_DR2'].keys())[0]
+                fov_stars = r['result']['Gaia_DR2'][key]
+
+                return fov_stars
+        except Exception as _e:
+            print(_e)
+            continue
+
+    return None
+
+
 def astrometry(_obs, _config):
     """
 
@@ -650,6 +698,9 @@ def astrometry(_obs, _config):
     """
 
     _tmp = _obs.split('_')
+    _sou_name = '_'.join(_tmp[0:-5])
+    # mode num:
+    _mode = _tmp[-5:-4][0]
     # code of the filter used:
     _filt = _tmp[-4:-3][0]
     # date and time of obs:
@@ -703,7 +754,7 @@ def astrometry(_obs, _config):
         print(out['table'])
 
     # save preview
-    preview_img = load_fits(os.path.join(path_in, fits_in))
+    preview_img = load_fits(os.path.join(_path_registered, _fits_in))
     # print(preview_img.shape)
     # scale with local contrast optimization for preview:
     # preview_img = scale_image(preview_img, correction='local')
@@ -735,16 +786,296 @@ def astrometry(_obs, _config):
     fname = '{:s}_registered_sex.png'.format(_obs)
     plt.savefig(os.path.join(_path_out, fname), dpi=300)
 
+    ''' get stars from Gaia DR2 catalogue, create fake images, then cross correlate them '''
+    # stars in the field (without mag cut-off):
+    if _config['pipeline']['astrometry']['fov_center'] == 'telescope':
+        # use whatever reported by telescope
+        header = get_fits_header(os.path.join(_path_registered, f'{_obs}_registered_0000.fits'))
+        star_sc = SkyCoord(ra=header['TELRA'][0], dec=header['TELDEC'][0],
+                           unit=(u.hourangle, u.deg), frame='icrs')
+    elif _config['pipeline']['astrometry']['fov_center'] == 'starlist':
+        # use Michael's starlist:
+        observed = parse_observed_dat(os.path.join(_config['path']['path_archive'], 'observed.dat'))
+        star_sc = SkyCoord(ra=observed[_sou_name][0], dec=observed[_sou_name][1], unit=(u.deg, u.deg), frame='icrs')
+
+    if _config['pipeline']['astrometry']['verbose']:
+        print('nominal FoV center', star_sc)
+        # print(star_sc.ra.deg, star_sc.dec.deg)
+
+    # search radius*2: " -> rad
+    fov_size_ref_arcsec = _config['pipeline']['astrometry']['reference_win_size']
+    fov_size_ref = fov_size_ref_arcsec * np.pi / 180.0 / 3600
+
+    fov_stars = query_reference_catalog(_star_sc=star_sc, _fov_size_ref_arcsec=fov_size_ref_arcsec, retries=3)
+
+    # convert to astropy table:
+    fov_stars = np.array([[fov_star['source_id'], fov_star['ra'], fov_star['dec'],
+                           fov_star['ra_error'], fov_star['dec_error'], fov_star['phot_g_mean_mag']]
+                          for fov_star in fov_stars])
+    fov_stars = Table(fov_stars, names=('source_id', 'RA', 'Dec', 'e_RA', 'e_Dec', 'mag'))
+    if _config['pipeline']['astrometry']['verbose']:
+        print(fov_stars)
+
+    pix_ref, mag_ref = plot_field(target=star_sc, window_size=[fov_size_ref, fov_size_ref], _model_psf=None,
+                                  grid_stars=fov_stars, num_pix=preview_img.shape[0], _highlight_brighter_than_mag=None,
+                                  scale_bar=False, scale_bar_size=20, _display_plot=False, _save_plot=False,
+                                  path='./', name='field')
+
+    ''' detect shift '''
+    fov_size_arcsec = _config['telescope']['KPNO_2.1m']['fov_x']
+    fov_size_det = fov_size_arcsec * np.pi / 180.0 / 3600
+    mag_det /= np.median(mag_det)
+    mag_det = -2.5 * np.log10(mag_det)
+    # add (pretty arbitrary) baseline from ref
+    mag_det += np.median(mag_ref)
+
+    naxis_det = int(preview_img.shape[0] * (fov_size_det * 180.0 / np.pi * 3600) / fov_size_arcsec)
+    naxis_ref = int(preview_img.shape[0] * (fov_size_ref * 180.0 / np.pi * 3600) / fov_size_arcsec)
+    if _config['pipeline']['astrometry']['verbose']:
+        print(naxis_det, naxis_ref)
+    # effectively shift detected positions to center of ref frame to reduce distortion effect
+    pix_det_ref = pix_det + np.array([naxis_ref // 2, naxis_ref // 2]) - np.array([naxis_det // 2, naxis_det // 2])
+    # pix_det_ref = pix_det
+    detected = make_image(target=star_sc, window_size=[fov_size_ref, fov_size_ref], _model_psf=None,
+                          pix_stars=pix_det_ref, mag_stars=mag_det, num_pix=preview_img.shape[0])
+    reference = make_image(target=star_sc, window_size=[fov_size_ref, fov_size_ref], _model_psf=None,
+                           pix_stars=pix_ref, mag_stars=mag_ref, num_pix=preview_img.shape[0])
+
+    detected[detected == 0] = 0.0001
+    detected[np.isnan(detected)] = 0.0001
+    detected = np.log(detected)
+
+    reference[reference == 0] = 0.0001
+    reference[np.isnan(reference)] = 0.0001
+    reference = np.log(reference)
+
+    # register shift: pixel precision first
+    shift, error, diffphase = register_translation(reference, detected, upsample_factor=1)
+    if _config['pipeline']['astrometry']['verbose']:
+        print('pixel precision offset:', shift, error)
+    # shift, error, diffphase = register_translation(reference, detected, upsample_factor=2)
+    # print('subpixel precision offset:', shift, error)
+
+    # associate!
+    matched = []
+    mask_matched = []
+    for si, s in enumerate(pix_det_ref):
+        s_shifted = s + np.array(shift[::-1])
+
+        pix_distance = np.min(np.linalg.norm(pix_ref - s_shifted, axis=1))
+        if _config['pipeline']['astrometry']['verbose']:
+            print(pix_distance)
+
+        if pix_distance < _config['pipeline']['astrometry']['max_pix_distance_for_match']:
+            min_ind = np.argmin(np.linalg.norm(pix_ref - s_shifted, axis=1))
+
+            # note: errors in Gaia position are given in mas, so convert to deg by  / 1e3 / 3600
+            matched.append(np.hstack([pix_det[si], pix_det_err[si],
+                                      np.array([fov_stars['RA'][min_ind],
+                                                fov_stars['Dec'][min_ind],
+                                                fov_stars['e_RA'][min_ind] / 1e3 / 3600,
+                                                fov_stars['e_Dec'][min_ind] / 1e3 / 3600,
+                                                0.0])]))
+            # fov_stars['RADEcor'][min_ind]])]))
+            mask_matched.append(min_ind)
+
+    matched = np.array(matched)
+    if _config['pipeline']['astrometry']['verbose']:
+        print('total matched:', len(matched))
+
+    ''' plot and save fake images used to detect shift '''
+    plt.close('all')
+    fig = plt.figure('fake detected')
+    fig.set_size_inches(4, 4, forward=False)
+    ax = plt.Axes(fig, [0., 0., 1., 1.])
+    ax.set_axis_off()
+    fig.add_axes(ax)
+    ax.imshow(scale_image(detected, correction='local'), cmap=plt.cm.magma, origin='lower', interpolation='nearest')
+    # save figure
+    fname = '{:s}_fake_detected.png'.format(_obs)
+    plt.savefig(os.path.join(_path_out, fname), dpi=300)
+
+    # apply shift:
+    _nthreads = multiprocessing.cpu_count()
+    shifted = image_registration.fft_tools.shiftnd(detected, (shift[0], shift[1]),
+                                                   nthreads=_nthreads, use_numpy_fft=False)
+    plt.close('all')
+    fig = plt.figure('fake detected with estimated offset')
+    fig.set_size_inches(4, 4, forward=False)
+    ax = plt.Axes(fig, [0., 0., 1., 1.])
+    ax.set_axis_off()
+    fig.add_axes(ax)
+    ax.imshow(scale_image(shifted, correction='local'), cmap=plt.cm.magma, origin='lower', interpolation='nearest')
+    # save figure
+    fname = '{:s}_fake_detected_offset.png'.format(_obs)
+    plt.savefig(os.path.join(_path_out, fname), dpi=300)
+
+    plt.close('all')
+    fig = plt.figure('fake reference')
+    fig.set_size_inches(4, 4, forward=False)
+    ax = plt.Axes(fig, [0., 0., 1., 1.])
+    ax.set_axis_off()
+    fig.add_axes(ax)
+    ax.imshow(scale_image(reference, correction='local'), cmap=plt.cm.magma, origin='lower', interpolation='nearest')
+    # save figure
+    fname = '{:s}_fake_reference.png'.format(_obs)
+    plt.savefig(os.path.join(_path_out, fname), dpi=300)
+
+    ''' solve field '''
+    # a priori RA/Dec positions:
+    X = matched[:, 5:7]
+    # measured CCD positions centered around zero:
+    Y = matched[:, 0:2] - (np.array(preview_img.shape) / 2.0)
+
+    # initial parameters of the linear transform + distortion:
+    # p0 = np.array([star_sc.ra.deg, star_sc.dec.deg,
+    #                -1. / ((264. / 1024.) / 3600. * 0.999),
+    #                1. / ((264. / 1024.) / 3600. * 0.002),
+    #                1. / ((264. / 1024.) / 3600. * 0.002),
+    #                1. / ((264. / 1024.) / 3600. * 0.999),
+    #                1e-7, 1e-7, 1e-7, 1e-7, 1e-7,
+    #                1e-2, 1e-5, 1e-7, 1e-7, 1e-5])
+    # initial parameters of the linear transform:
+    p0 = np.array([star_sc.ra.deg, star_sc.dec.deg,
+                   -1. / ((fov_size_arcsec / 1024.) / 3600.) * 0.999,
+                   1. / ((fov_size_arcsec / 1024.) / 3600.) * 0.002,
+                   1. / ((fov_size_arcsec / 1024.) / 3600.) * 0.002,
+                   1. / ((fov_size_arcsec / 1024.) / 3600.) * 0.999])
+
+    ''' estimate linear transform parameters'''
+    # TODO: add weights depending on sextractor error?
+    # scaling params to help leastsq land on a good solution
+    scaling = [1e-2, 1e-2, 1e-5, 1e-3, 1e-3, 1e-5]
+    if _config['pipeline']['astrometry']['verbose']:
+        print('solving with LSQ to get initial parameter estimates')
+    plsq = leastsq(residual, p0, args=(Y, X), ftol=1.49012e-13, xtol=1.49012e-13, full_output=True,
+                   diag=scaling)
+    # print(plsq)
+    if _config['pipeline']['astrometry']['verbose']:
+        print(plsq[0])
+    # residuals = residual(plsq[0], Y, X)
+    residuals = plsq[2]['fvec']
+    if _config['pipeline']['astrometry']['verbose']:
+        print('residuals:')
+        print(residuals)
+
+    for jj in range(int(_config['pipeline']['astrometry']['outlier_flagging_passes'])):
+        # identify outliers. they are likely to be false identifications, so discard them and redo the fit
+        print('flagging outliers and refitting, take {:d}'.format(jj + 1))
+        mask_outliers = residuals <= _config['pipeline']['astrometry']['outlier_pix']  # pix
+
+        # flag:
+        X = X[mask_outliers, :]
+        Y = Y[mask_outliers, :]
+
+        # plsq = leastsq(residual, p0, args=(Y, X), ftol=1.49012e-13, xtol=1.49012e-13, full_output=True)
+        plsq = leastsq(residual, plsq[0], args=(Y, X), ftol=1.49012e-13, xtol=1.49012e-13, full_output=True)
+        if _config['pipeline']['astrometry']['verbose']:
+            print(plsq[0])
+        # residuals = residual(plsq[0], Y, X)
+        residuals = plsq[2]['fvec']
+        if _config['pipeline']['astrometry']['verbose']:
+            print('residuals:')
+            print(residuals)
+
+        # get an estimate of the covariance matrix:
+        pcov = plsq[1]
+        if (len(X) > len(p0)) and pcov is not None:
+            s_sq = (residuals ** 2).sum() / (len(X) - len(p0))
+            pcov = pcov * s_sq
+        else:
+            pcov = np.inf
+        if _config['pipeline']['astrometry']['verbose']:
+            print('covariance matrix diagonal estimate:')
+            # print(pcov)
+            print(pcov.diagonal())
+
+    # apply bootstrap to get a reasonable estimate of what the errors of the estimated parameters are
+    if _config['pipeline']['astrometry']['verbose']:
+        print('solving with LSQ bootstrap')
+    # plsq_bootstrap, err_bootstrap = fit_bootstrap(residual, p0, Y, X, yerr_systematic=0.0, n_samp=100)
+    plsq_bootstrap, err_bootstrap = fit_bootstrap(residual, plsq[0], Y, X,
+                                                  yerr_systematic=0.0, n_samp=100, Nsigma=2.0)
+    if _config['pipeline']['astrometry']['verbose']:
+        print(plsq_bootstrap)
+        print(err_bootstrap)
+    residuals = residual(plsq_bootstrap, Y, X)
+    if _config['pipeline']['astrometry']['verbose']:
+        print('residuals:')
+        print(residuals)
+
+    # use bootstrapped solution as the final solution:
+    plsq = (plsq_bootstrap, err_bootstrap, plsq[2:])
+
+    ''' plot the result '''
+    M_m1 = np.matrix([[plsq[0][2], plsq[0][3]], [plsq[0][4], plsq[0][5]]])
+    M = np.linalg.pinv(M_m1)
+    if _config['pipeline']['astrometry']['verbose']:
+        print('M:', M)
+        print('M^-1:', M_m1)
+
+    Q, R = np.linalg.qr(M)
+    # print('Q:', Q)
+    # print('R:', R)
+
+    Y_C = compute_detector_position(plsq[0], X).T + preview_img.shape[0] / 2
+    Y_tan = compute_detector_position(plsq[0], np.array([list(plsq[0][0:2])])).T + preview_img.shape[0] / 2
+    # print(Y_C)
+    if _config['pipeline']['astrometry']['verbose']:
+        print('Tangent point pixel position: ', Y_tan)
+    # print('max UV: ', compute_detector_position(plsq[0], np.array([[205.573314, 28.370672],
+    #                                                                [205.564369, 28.361843]])))
+
+    theta = np.arccos(Q[1, 1]) * 180 / np.pi
+    s = np.mean((abs(R[0, 0]), abs(R[1, 1]))) * 3600
+    size = s * preview_img.shape[0]
+
+    if _config['pipeline']['astrometry']['verbose']:
+        print('Estimate linear transformation:')
+        print('rotation angle: {:.5f} degrees'.format(theta))
+        print('pixel scale: {:.7f}\" -- mean, {:.7f}\" -- x, {:.7f}\" -- y'.format(s,
+                                                                                   abs(R[0, 0]) * 3600,
+                                                                                   abs(R[1, 1]) * 3600))
+        print('image size for mean pixel scale: {:.4f}\" x {:.4f}\"'.format(size, size))
+        print('image size: {:.4f}\" x {:.4f}\"'.format(abs(R[0, 0]) * 3600 * preview_img.shape[0],
+                                                       abs(R[1, 1]) * 3600 * preview_img.shape[1]))
+
+    ''' test the solution '''
+    fov_center = SkyCoord(ra=plsq[0][0], dec=plsq[0][1], unit=(u.deg, u.deg), frame='icrs')
+    detected_solution = make_image(target=fov_center, window_size=[fov_size_det, fov_size_det], _model_psf=None,
+                                   pix_stars=pix_det, mag_stars=mag_det, num_pix=preview_img.shape[0])
+    detected_solution[detected_solution == 0] = 0.0001
+    detected_solution[np.isnan(detected_solution)] = 0.0001
+    detected_solution = np.log(detected_solution)
+
+    plt.close('all')
+    fig = plt.figure('detected stars')
+    fig.set_size_inches(4, 4, forward=False)
+    ax = plt.Axes(fig, [0., 0., 1., 1.])
+    ax.set_axis_off()
+    fig.add_axes(ax)
+    ax.imshow(scale_image(detected_solution, correction='local'), cmap=plt.cm.magma,
+              origin='lower', interpolation='nearest')
+    ax.plot(Y_C[:, 0], Y_C[:, 1], 'o', markersize=6,
+            markeredgewidth=1, markerfacecolor='None', markeredgecolor=plt.cm.Blues(0.8),
+            label='Linear transformation')
+
+    # save figure
+    fname = '{:s}_detections_solved.png'.format(_obs)
+    plt.savefig(os.path.join(_path_out, fname), dpi=300)
+
 
 if __name__ == '__main__':
 
     obs = '1819a_10_g_20180607_062809.034490_o'
-    config = get_config('/Users/dmitryduev/_caltech/python/archiver-kped/archiver/code/config.json')
-    # astrometry(obs)
+    config = get_config('/Users/dmitryduev/_caltech/python/archiver-kped/archiver/code/config.local.json')
+    astrometry(obs, config)
+
+    raise Exception('HALT, HAENDE HOCH!!')
 
     #####################################################################
 
-    path_in = '/Users/dmitryduev/_caltech/python/archiver-kped/_archive/'+\
+    path_in = '/Users/dmitryduev/_caltech/python/archiver-kped/_archive/' + \
               '20180607/1819a_10_g_20180607_062809.034490_o/registration'
     fits_in = '1819a_10_g_20180607_062809.034490_o_registered_sum.fits'
 

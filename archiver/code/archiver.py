@@ -2788,7 +2788,7 @@ class KPEDObservation(Observation):
         _obs = self.id
         # parse name:
         _tmp = _obs.split('_')
-        # TODO: if we add program nums in the future
+        # TODO: if we add program numbers in the future
         # _prog_num = str(_tmp[0])
         _prog_num = str(0)
 
@@ -2800,7 +2800,9 @@ class KPEDObservation(Observation):
             _prog_pi = ['admin']
         # stack name together if necessary (if contains underscores):
         # print(_tmp)
-        _sou_name = '_'.join(_tmp[0:-4])
+        _sou_name = '_'.join(_tmp[0:-5])
+        # mode num:
+        _mode = _tmp[-5:-4][0]
         # code of the filter used:
         _filt = _tmp[-4:-3][0]
         # date and time of obs:
@@ -2817,6 +2819,7 @@ class KPEDObservation(Observation):
                 'program_PI': _prog_pi
             },
             'name': _sou_name,
+            'mode': _mode,
             'filter': _filt,
             'date_utc': _date_utc,
             'marker': _marker,
@@ -2841,6 +2844,7 @@ class KPEDObservation(Observation):
             'date_utc': None,
             'telescope': None,
             'filter': None,
+            'mode': None,
             'exposure': None,
             'coordinates': {
                 'epoch': None,
@@ -3624,8 +3628,11 @@ class KPEDRegistrationPipeline(KPEDPipeline):
             # load darks and flats
             if _v:
                 print('Loading darks and flats')
+            # dark, flat = self.load_darks_and_flats(_path_calib,
+            #                                        str(int(self.db_entry['fits_header'][0]['MODE_NUM'][0])),
+            #                                        self.db_entry['filter'], image_size[0])
             dark, flat = self.load_darks_and_flats(_path_calib,
-                                                   str(int(self.db_entry['fits_header'][0]['MODE_NUM'][0])),
+                                                   self.db_entry['mode'],
                                                    self.db_entry['filter'], image_size[0])
             if dark is None or flat is None:
                 raise Exception('Could not open darks and flats')
