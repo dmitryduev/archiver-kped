@@ -165,6 +165,10 @@
       "max_pix_distance_for_match": 10,
       "outlier_flagging_passes": 2,
       "outlier_pix": 5,
+      "bootstrap": {
+        "n_samp": 100,
+        "Nsigma": 2
+      },
       "verbose": true,
 
       "help": {
@@ -176,6 +180,7 @@
         "max_pix_distance_for_match": "maximum distance in pix to associate detected and reference sources",
         "outlier_flagging_passes": "number of passes to flag outliers and refit the astrometric solution",
         "outlier_pix": "mark source as outlier if post-fit residual greater than this value in pix",
+        "bootstrap": "LSQ bootstrap parameters: n_samp - n of rand sampl to generate; Nsigma - confidence interval (1 - 68.3%, 2 - 95.44%)",
         "verbose": "vocalize what's happening?"
       }
     },

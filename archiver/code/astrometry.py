@@ -790,7 +790,7 @@ def astrometry(_obs, _config):
     # stars in the field (without mag cut-off):
     if _config['pipeline']['astrometry']['fov_center'] == 'telescope':
         # use whatever reported by telescope
-        header = get_fits_header(os.path.join(_path_registered, f'{_obs}_registered_0000.fits'))
+        header = get_fits_header(os.path.join(_path_registered, f'{_obs}_registered_0000.fits'))[0]
         star_sc = SkyCoord(ra=header['TELRA'][0], dec=header['TELDEC'][0],
                            unit=(u.hourangle, u.deg), frame='icrs')
     elif _config['pipeline']['astrometry']['fov_center'] == 'starlist':
@@ -994,8 +994,10 @@ def astrometry(_obs, _config):
     if _config['pipeline']['astrometry']['verbose']:
         print('solving with LSQ bootstrap')
     # plsq_bootstrap, err_bootstrap = fit_bootstrap(residual, p0, Y, X, yerr_systematic=0.0, n_samp=100)
+    n_samp = _config['pipeline']['astrometry']['bootstrap']['n_samp']
+    Nsigma = _config['pipeline']['astrometry']['bootstrap']['Nsigma']
     plsq_bootstrap, err_bootstrap = fit_bootstrap(residual, plsq[0], Y, X,
-                                                  yerr_systematic=0.0, n_samp=100, Nsigma=2.0)
+                                                  yerr_systematic=0.0, n_samp=n_samp, Nsigma=Nsigma)
     if _config['pipeline']['astrometry']['verbose']:
         print(plsq_bootstrap)
         print(err_bootstrap)
@@ -1063,6 +1065,51 @@ def astrometry(_obs, _config):
     # save figure
     fname = '{:s}_detections_solved.png'.format(_obs)
     plt.savefig(os.path.join(_path_out, fname), dpi=300)
+
+    ''' add WCS to registered image '''
+    # good solution?
+    # tangent point position error < 1"?
+    tan_point_error_ok = np.max(err_bootstrap[:2]) < 3e-4
+    # linear mapping error < 30 pixel/degree (corresponds to error of ~2 pixel/FoV)?
+    linear_mapping_error_ok = np.max(err_bootstrap[2:]) < 30
+
+    if tan_point_error_ok and linear_mapping_error_ok:
+        if _config['pipeline']['astrometry']['verbose']:
+            print('Solution OK, adding WCS to registered image')
+
+        # mapping parameters:
+        RA_tan, Dec_tan, M_11, M_12, M_21, M_22 = plsq_bootstrap[0], plsq_bootstrap[1], \
+                                                  M[0, 0], M[0, 1], M[1, 0], M[1, 1]
+        x_tan, y_tan = Y_tan
+
+        nx, ny = preview_img.shape
+
+        w = wcs.WCS(naxis=2)
+        w._naxis1 = nx
+        w._naxis2 = ny
+        w.naxis1 = w._naxis1
+        w.naxis2 = w._naxis2
+
+        w.wcs.radesys = 'ICRS'
+        w.wcs.equinox = 2000.0
+        # position of the tangential point on the detector [pix]
+        w.wcs.crpix = np.array([x_tan, y_tan])
+
+        # sky coordinates of the tangential point;
+        w.wcs.crval = [RA_tan, Dec_tan]
+        # w.wcs.ctype = ["RA---TAN-SIP", "DEC--TAN-SIP"]
+        w.wcs.ctype = ["RA---TAN", "DEC--TAN"]
+        # linear mapping detector :-> focal plane [deg/pix]
+        w.wcs.cd = np.array([[M_11, M_12],
+                             [M_21, M_22]])
+
+        # turn WCS object into header
+        new_header = w.to_header(relax=True)
+        # merge with old header:
+        # for key in header.keys():
+        #     new_header[key] = header[key]
+
+        export_fits(os.path.join(_path_registered, f'{_obs}_registered_sum.wcs.fits'), preview_img, _header=new_header)
 
 
 if __name__ == '__main__':
