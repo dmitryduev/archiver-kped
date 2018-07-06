@@ -148,11 +148,24 @@
     },
 
     "astrometry": {
-
+      "sextractor_settings": {
+        "params": ["X_IMAGE", "Y_IMAGE", "X2_IMAGE", "Y2_IMAGE", "XY_IMAGE",
+                   "XWIN_IMAGE", "YWIN_IMAGE",
+                   "FLUX_AUTO", "FLUXERR_AUTO",
+                   "A_IMAGE", "B_IMAGE", "FWHM_IMAGE",
+                   "FLAGS", "FLAGS_WEIGHT", "FLUX_RADIUS"],
+        "config": {"DETECT_MINAREA": 5, "PHOT_APERTURES": 16, "SATUR_LEVEL": 1e10,
+                   "DETECT_THRESH": "5.0", "THRESH_TYPE": "RELATIVE",
+                   "WEIGHT_TYPE": "MAP_WEIGHT", "WEIGHT_GAIN": "Y"},
+        "sexpath": "sextractor"
+      },
+      "vignetting_cutoff": 0.98,
       "verbose": true,
 
       "help": {
         "self": "astrometry pipeline",
+        "sextractor_settings": "SExtractor settings",
+        "vignetting_cutoff": "ignore sextracted sources if pix value on flat field for filter is below this",
         "verbose": "vocalize what's happening?"
       }
     },

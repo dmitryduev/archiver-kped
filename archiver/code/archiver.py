@@ -3481,7 +3481,7 @@ class KPEDRegistrationPipeline(KPEDPipeline):
         _date = self.db_entry['date_utc'].strftime('%Y%m%d')
 
         # path to store unzipped raw files
-        _path_tmp = self.config['path']['path_tmp']
+        # _path_tmp = self.config['path']['path_tmp']
         # path to raw files:
         _path_raw = os.path.join(self.db_entry['raw_data']['location'][1], _date)
         # path to archive:

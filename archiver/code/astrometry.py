@@ -1,6 +1,9 @@
+import inspect
+
 import sewpy
 import numpy as np
 import os
+import datetime
 from skimage import exposure, img_as_float
 from copy import deepcopy
 from scipy.optimize import leastsq
@@ -176,7 +179,7 @@ def make_image(target, window_size, _model_psf, pix_stars, mag_stars, num_pix=10
 
 
 def plot_field(target, window_size, _model_psf, grid_stars=None,
-               pix_stars=None, mag_stars=None,
+               pix_stars=None, mag_stars=None, a_priori_mapping=False,
                num_pix=1024, _highlight_brighter_than_mag=None,
                _display_magnitude_labels=False, scale_bar=False, scale_bar_size=20,
                _display_plot=False, _save_plot=False, path='./', name='field'):
@@ -213,16 +216,15 @@ def plot_field(target, window_size, _model_psf, grid_stars=None,
     w.wcs.crval = [target.ra.deg, target.dec.deg]
     w.wcs.ctype = ["RA---TAN", "DEC--TAN"]
     # linear mapping detector :-> focal plane [deg/pix]
-    # actual:
-    # w.wcs.cd = np.array([[-4.9653758578816782e-06, 7.8012027500556068e-08],
-    #                      [8.9799574245829621e-09, 4.8009647689165968e-06]])
     # with RA inverted to correspond to previews
-    w.wcs.cd = np.array([[-(264. / 1024.) / 3600. * 0.999, (264. / 1024.) / 3600. * 0.002],
-                         [(264. / 1024.) / 3600. * 0.002, (264. / 1024.) / 3600. * 0.999]])
-    # w.wcs.cd = np.array([[-(264. / 1024.) / 3600. * 0.999, (264. / 1024.) / 3600. * 0.002],
-    #                      [(264. / 1024.) / 3600. * 0.002, (264. / 1024.) / 3600. * 0.999]]) * 2
-    # w.wcs.cd = np.array([[5e-06, 1e-8],
-    #                      [1e-8, 5e-06]]) * 2
+    if a_priori_mapping:
+        # a priori mapping derived from first principles:
+        w.wcs.cd = np.array([[-(264. / 1024.) / 3600. * 0.999, (264. / 1024.) / 3600. * 0.002],
+                             [(264. / 1024.) / 3600. * 0.002, (264. / 1024.) / 3600. * 0.999]])
+    else:
+        w.wcs.cd = np.array([[-7.128e-05, -6.729e-07],
+                             [ 5.967e-07,  7.121e-05]])
+
     print(w.wcs.cd)
 
     # set up quadratic distortions [xy->uv and uv->xy]
@@ -334,10 +336,11 @@ def get_fits_header(fits_file):
 
 def load_fits(fin, return_header=False):
     with fits.open(fin) as _f:
-        _scidata = _f[0].data
-    _header = get_fits_header(fin) if return_header else None
+        _scidata = np.nan_to_num(_f[0].data)
+    # _header = get_fits_header(fin) if return_header else None
 
-    return _scidata, _header
+    # return _scidata, _header
+    return _scidata
 
 
 def export_fits(path, _data, _header=None):
@@ -568,7 +571,7 @@ def compute_detector_position(p, x, quadratic=False):
     return y_C.T
 
 
-def fit_bootstrap(_residual, p0, datax, datay, yerr_systematic=0.0, n_samp=100, _scaling=None):
+def fit_bootstrap(_residual, p0, datax, datay, yerr_systematic=0.0, n_samp=100, _scaling=None, Nsigma=1.):
     # Fit first time
     _p = leastsq(_residual, p0, args=(datax, datay), full_output=True, ftol=1.49012e-13, xtol=1.49012e-13)
 
@@ -604,7 +607,6 @@ def fit_bootstrap(_residual, p0, datax, datay, yerr_systematic=0.0, n_samp=100, 
     # parameter estimates:
     # 1sigma corresponds to 68.3% confidence interval
     # 2sigma corresponds to 95.44% confidence interval
-    Nsigma = 1.
 
     err_pfit = Nsigma * np.std(ps, 0)
 
@@ -614,7 +616,133 @@ def fit_bootstrap(_residual, p0, datax, datay, yerr_systematic=0.0, n_samp=100, 
     return pfit_bootstrap, perr_bootstrap
 
 
+def get_config(_config_file):
+    """
+        Load config JSON file
+    """
+    ''' script absolute location '''
+    abs_path = os.path.dirname(inspect.getfile(inspect.currentframe()))
+
+    if _config_file[0] not in ('/', '~'):
+        if os.path.isfile(os.path.join(abs_path, _config_file)):
+            config_path = os.path.join(abs_path, _config_file)
+        else:
+            raise IOError('Failed to find config file')
+    else:
+        if os.path.isfile(_config_file):
+            config_path = _config_file
+        else:
+            raise IOError('Failed to find config file')
+
+    with open(config_path) as cjson:
+        config_data = json.load(cjson)
+        # config must not be empty:
+        if len(config_data) > 0:
+            return config_data
+        else:
+            raise Exception('Failed to load config file')
+
+
+def astrometry(_obs, _config):
+    """
+
+    :return:
+    """
+
+    _tmp = _obs.split('_')
+    # code of the filter used:
+    _filt = _tmp[-4:-3][0]
+    # date and time of obs:
+    _date = datetime.datetime.strptime(_tmp[-3] + _tmp[-2], '%Y%m%d%H%M%S.%f').strftime('%Y%m%d')
+
+    # path to archive:
+    _path_archive = os.path.join(_config['path']['path_archive'], _date)
+    _path_registered = os.path.join(_path_archive, _obs, 'registration')
+    # path to output:
+    _path_out = os.path.join(_path_archive, _obs, 'astrometry')
+
+    if not (os.path.exists(_path_out)):
+        os.makedirs(_path_out)
+
+    _fits_in = f'{_obs}_registered_sum.fits'
+
+    # set up sextractor:
+    # use master flat field image for filter as weight map:
+    weight_image = os.path.join(_config['path']['path_archive'], 'calib', f'flat_{_filt}.fits')
+    sex_config = _config['pipeline']['astrometry']['sextractor_settings']['config']
+    sex_config['WEIGHT_IMAGE'] = weight_image
+
+    sew = sewpy.SEW(params=_config['pipeline']['astrometry']['sextractor_settings']['params'],
+                    config=sex_config,
+                    sexpath=_config['pipeline']['astrometry']['sextractor_settings']['sexpath'])
+
+    out = sew(os.path.join(_path_registered, _fits_in))
+    # sort by raw flux
+    out['table'].sort('FLUX_AUTO')
+    # descending order: first is brightest
+    out['table'].reverse()
+
+    # remove vignetted stuff. use the g band master flat field image
+    weight_image_g = os.path.join(_config['path']['path_archive'], 'calib', 'flat_g.fits')
+    weights = load_fits(weight_image_g)
+    rows_to_remove = []
+    for ri, row in enumerate(out['table']):
+        x, y = int(row['X_IMAGE']), int(row['Y_IMAGE'])
+        # print(x, y, weights[x, y])
+        if weights[x, y] < _config['pipeline']['astrometry']['vignetting_cutoff']:
+            rows_to_remove.append(ri)
+
+    out['table'].remove_rows(rows_to_remove)
+
+    # detected sources:
+    pix_det = np.vstack((out['table']['X_IMAGE'], out['table']['Y_IMAGE'])).T
+    pix_det_err = np.vstack((out['table']['X2_IMAGE'], out['table']['Y2_IMAGE'], out['table']['XY_IMAGE'])).T
+    mag_det = np.array(out['table']['FLUX_AUTO'])
+
+    if _config['pipeline']['astrometry']['verbose']:
+        print(out['table'])
+
+    # save preview
+    preview_img = load_fits(os.path.join(path_in, fits_in))
+    # print(preview_img.shape)
+    # scale with local contrast optimization for preview:
+    # preview_img = scale_image(preview_img, correction='local')
+    # preview_img = scale_image(preview_img, correction='log')
+    # preview_img = scale_image(preview_img, correction='global')
+
+    plt.close('all')
+    fig = plt.figure()
+    fig.set_size_inches(4, 4, forward=False)
+    ax = plt.Axes(fig, [0., 0., 1., 1.])
+    ax.set_axis_off()
+    fig.add_axes(ax)
+    # plot detected objects:
+    for i, _ in enumerate(out['table']['XWIN_IMAGE']):
+        ax.plot(out['table']['X_IMAGE'][i] - 1, out['table']['Y_IMAGE'][i] - 1,
+                'o', markersize=out['table']['FWHM_IMAGE'][i] / 2,
+                markeredgewidth=2.5, markerfacecolor='None', markeredgecolor=plt.cm.Greens(0.7),
+                label='SExtracted')
+        # ax.annotate(i, (out['table']['X_IMAGE'][i]+40, out['table']['Y_IMAGE'][i]+40),
+        #             color=plt.cm.Blues(0.3), backgroundcolor='black')
+
+    preview_img_zerod = preview_img
+    preview_img_zerod[preview_img_zerod < np.median(np.median(preview_img_zerod)) * 0.5] = 0.01
+    ax.imshow(np.sqrt(np.sqrt(preview_img_zerod)), cmap=plt.cm.magma, origin='lower', interpolation='nearest')
+
+    plt.grid(False)
+
+    # save figure
+    fname = '{:s}_registered_sex.png'.format(_obs)
+    plt.savefig(os.path.join(_path_out, fname), dpi=300)
+
+
 if __name__ == '__main__':
+
+    obs = '1819a_10_g_20180607_062809.034490_o'
+    config = get_config('/Users/dmitryduev/_caltech/python/archiver-kped/archiver/code/config.json')
+    # astrometry(obs)
+
+    #####################################################################
 
     path_in = '/Users/dmitryduev/_caltech/python/archiver-kped/_archive/'+\
               '20180607/1819a_10_g_20180607_062809.034490_o/registration'
@@ -643,12 +771,12 @@ if __name__ == '__main__':
     out['table'].reverse()
 
     # remove vignetted stuff:
-    weights = load_fits('/Users/dmitryduev/_caltech/python/archiver-kped/_archive/20180607/calib/flat_g.fits')[0]
+    weights = load_fits('/Users/dmitryduev/_caltech/python/archiver-kped/_archive/20180607/calib/flat_g.fits')
     rows_to_remove = []
     for ri, row in enumerate(out['table']):
         x, y = int(row['X_IMAGE']), int(row['Y_IMAGE'])
         # print(x, y, weights[x, y])
-        if weights[x, y] < 0.9:
+        if weights[x, y] < 0.98:
             rows_to_remove.append(ri)
 
     out['table'].remove_rows(rows_to_remove)
@@ -670,7 +798,7 @@ if __name__ == '__main__':
     # print(np.median(out['table']['A_IMAGE']), np.median(out['table']['B_IMAGE']))
 
     # load first image frame from the fits file
-    preview_img, header = load_fits(os.path.join(path_in, fits_in), return_header=True)
+    preview_img = load_fits(os.path.join(path_in, fits_in))
     # print(preview_img.shape)
     # scale with local contrast optimization for preview:
     # preview_img = scale_image(preview_img, correction='local')
@@ -696,10 +824,18 @@ if __name__ == '__main__':
     # ax.imshow(preview_img, cmap=plt.cm.magma, origin='lower', interpolation='nearest')
 
     preview_img_zerod = preview_img
-    preview_img_zerod[preview_img_zerod < np.median(np.median(preview_img_zerod))*0.5] = 0.01
-    # preview_img_zerod += np.min(preview_img_zerod) + 0.01
-    ax.imshow(np.sqrt(np.sqrt(preview_img_zerod)), cmap=plt.cm.magma, origin='lower', interpolation='nearest')
+    # preview_img_zerod += np.min(np.min(preview_img_zerod)) + 0.1
+    # # preview_img_zerod = np.sqrt(preview_img_zerod)
+    # preview_img_zerod[preview_img_zerod == 0] = 0.1
+    # preview_img_zerod[np.isnan(preview_img_zerod)] = 0.1
+    # # scale with local contrast optimization for preview:
+    # preview_img_zerod = scale_image(preview_img_zerod, correction='global')
+    # # preview_img = scale_image(preview_img, correction='log')
+    # # preview_img = scale_image(preview_img, correction='global')
     # ax.imshow(np.log(preview_img_zerod), cmap=plt.cm.magma, origin='lower', interpolation='nearest')
+
+    preview_img_zerod[preview_img_zerod < np.median(np.median(preview_img_zerod))*0.5] = 0.01
+    ax.imshow(np.sqrt(np.sqrt(preview_img_zerod)), cmap=plt.cm.magma, origin='lower', interpolation='nearest')
 
     # preview_img_zerod = preview_img + np.min(np.min(preview_img)) + 0.1
     # ax.imshow(np.sqrt(preview_img_zerod), cmap='gray', origin='lower', interpolation='nearest')
@@ -712,7 +848,7 @@ if __name__ == '__main__':
     #     os.makedirs(_path_out)
     # plt.savefig(os.path.join(_path_out, fname_full), dpi=300)
 
-    # plt.show()
+    plt.show()
 
     ''' get stars from Gaia DR2 catalogue, create fake images, then cross correlate them '''
     # stars in the field (without mag cut-off):
@@ -1000,7 +1136,8 @@ if __name__ == '__main__':
     # apply bootstrap to get a reasonable estimate of what the errors of the estimated parameters are
     print('solving with LSQ bootstrap')
     # plsq_bootstrap, err_bootstrap = fit_bootstrap(residual, p0, Y, X, yerr_systematic=0.0, n_samp=100)
-    plsq_bootstrap, err_bootstrap = fit_bootstrap(residual, plsq[0], Y, X, yerr_systematic=0.0, n_samp=100)
+    plsq_bootstrap, err_bootstrap = fit_bootstrap(residual, plsq[0], Y, X,
+                                                  yerr_systematic=0.0, n_samp=100, Nsigma=2.0)
     print(plsq_bootstrap)
     print(err_bootstrap)
     print('residuals:')

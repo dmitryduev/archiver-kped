@@ -21,6 +21,10 @@ RUN pip install -r /app/requirements.txt
 # copy over the secrets:
 COPY secrets.json /app/
 
+# copy over the master calibration data
+RUN mkdir -p /archive/calib
+ADD _archive/calib/ /archive/calib/
+
 # copy over the code
 ADD code/ /app/
 
