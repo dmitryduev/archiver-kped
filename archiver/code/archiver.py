@@ -1218,7 +1218,8 @@ class KPEDArchiver(Archiver):
                 result = {'status': 'error', 'message': 'not implemented'}
 
             elif argdict['task'] == 'astrometry_pipeline':
-                result = {'status': 'error', 'message': 'not implemented yet'}
+                result = job_astrometry_pipeline(_id=argdict['id'], _config=argdict['config'],
+                                                 _db_entry=argdict['db_entry'], _task_hash=_task_hash)
 
             else:
                 result = {'status': 'error', 'message': 'unknown task'}
