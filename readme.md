@@ -21,11 +21,6 @@ docker run -d --restart always --name archiver-kped-mongo -p 27018:27017 -v arch
        mongo:latest
 ```
 
-Copy the default calibration data over to `/path/to/archive`
-```bash
-cp -r archiver/calib /path/to/archive
-```
-
 Create file archiver/secrets.json with the Kowalski login credentials:
 ```json
 {

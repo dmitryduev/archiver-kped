@@ -2092,7 +2092,7 @@ class KPEDArchiver(Archiver):
 
             else:
                 # copy "default" calib data over:
-                _path_in = os.path.join(self.config['path']['path_archive'], 'calib')
+                _path_in = os.path.join(self.config['path']['path_app'], 'calib')
 
                 # output dir exists?
                 if not os.path.exists(_path_out):
@@ -4581,7 +4581,7 @@ class KPEDAstrometryPipeline(KPEDPipeline):
 
             # set up sextractor:
             # use master flat field image for filter as weight map:
-            weight_image = os.path.join(self.config['path']['path_archive'], 'calib', f'flat_{_filt}.fits')
+            weight_image = os.path.join(self.config['path']['path_app'], 'calib', f'flat_{_filt}.fits')
             sex_config = self.config['pipeline']['astrometry']['sextractor_settings']['config']
             sex_config['WEIGHT_IMAGE'] = weight_image
 
@@ -4596,7 +4596,7 @@ class KPEDAstrometryPipeline(KPEDPipeline):
             out['table'].reverse()
 
             # remove vignetted stuff. use the g band master flat field image
-            weight_image_g = os.path.join(self.config['path']['path_archive'], 'calib', 'flat_g.fits')
+            weight_image_g = os.path.join(self.config['path']['path_app'], 'calib', 'flat_g.fits')
             weights = load_fits(weight_image_g)
             rows_to_remove = []
             for ri, row in enumerate(out['table']):
@@ -4658,7 +4658,7 @@ class KPEDAstrometryPipeline(KPEDPipeline):
                                    unit=(u.hourangle, u.deg), frame='icrs')
             elif self.config['pipeline']['astrometry']['fov_center'] == 'starlist':
                 # use Michael's starlist:
-                observed = self.parse_observed_dat(os.path.join(self.config['path']['path_archive'], 'observed.dat'))
+                observed = self.parse_observed_dat(os.path.join(self.config['path']['path_app'], 'observed.dat'))
                 star_sc = SkyCoord(ra=observed[_sou_name][0], dec=observed[_sou_name][1], unit=(u.deg, u.deg),
                                    frame='icrs')
 

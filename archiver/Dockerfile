@@ -22,11 +22,11 @@ RUN pip install -r /app/requirements.txt
 COPY secrets.json /app/
 
 # copy over the master calibration data
-RUN mkdir -p /archive/calib
-ADD calib/ /archive/calib/
+RUN mkdir -p /app/calib
+ADD calib/ /app/calib/
 
 # get list of observed targets from Michael's github:
-ADD https://raw.githubusercontent.com/mcoughlin/kp84/master/input/observed.dat /archive/
+ADD https://raw.githubusercontent.com/mcoughlin/kp84/master/input/observed.dat /app/
 
 # copy over the code
 ADD code/ /app/
