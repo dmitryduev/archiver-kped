@@ -6,7 +6,6 @@
 
 import matplotlib
 matplotlib.use('Agg')
-import multiprocessing
 import argparse
 import signal
 import timeout_decorator
@@ -2606,11 +2605,7 @@ class KPEDObservation(Observation):
                 _task_to_compute_hash = {'task': _part, 'id': self.id, 'config': self.config}
                 return _task, _task_to_compute_hash
 
-        # TODO:
-        # Photometry?
-        ''' Photometry pipeline '''
-
-        # Photometry?
+        # Astrometry?
         ''' Astrometry pipeline '''
         pipe = KPEDAstrometryPipeline(_config=self.config, _db_entry=self.db_entry)
         # check conditions necessary to run (defined in config.json):
@@ -2638,6 +2633,10 @@ class KPEDObservation(Observation):
                 return _task, _task_to_compute_hash
 
         return _task, _task_to_compute_hash
+
+        # TODO:
+        # Photometry?
+        ''' Photometry pipeline '''
 
     def check_raws(self, _location, _date, _date_raw_data):
         """
@@ -4767,20 +4766,19 @@ class KPEDAstrometryPipeline(KPEDPipeline):
             plt.savefig(os.path.join(_path_out, fname), dpi=300)
 
             # apply shift:
-            _nthreads = multiprocessing.cpu_count()
-            shifted = image_registration.fft_tools.shiftnd(detected, (shift[0], shift[1]),
-                                                           nthreads=_nthreads, use_numpy_fft=False)
-            plt.close('all')
-            fig = plt.figure('fake detected with estimated offset')
-            fig.set_size_inches(4, 4, forward=False)
-            ax = plt.Axes(fig, [0., 0., 1., 1.])
-            ax.set_axis_off()
-            fig.add_axes(ax)
-            ax.imshow(self.scale_image(shifted, correction='local'), cmap=plt.cm.magma, origin='lower',
-                      interpolation='nearest')
-            # save figure
-            fname = '{:s}_fake_detected_offset.png'.format(self.db_entry['_id'])
-            plt.savefig(os.path.join(_path_out, fname), dpi=300)
+            # shifted = image_registration.fft_tools.shiftnd(detected, (shift[0], shift[1]),
+            #                                                nthreads=1, use_numpy_fft=False)
+            # plt.close('all')
+            # fig = plt.figure('fake detected with estimated offset')
+            # fig.set_size_inches(4, 4, forward=False)
+            # ax = plt.Axes(fig, [0., 0., 1., 1.])
+            # ax.set_axis_off()
+            # fig.add_axes(ax)
+            # ax.imshow(self.scale_image(shifted, correction='local'), cmap=plt.cm.magma, origin='lower',
+            #           interpolation='nearest')
+            # # save figure
+            # fname = '{:s}_fake_detected_offset.png'.format(self.db_entry['_id'])
+            # plt.savefig(os.path.join(_path_out, fname), dpi=300)
 
             plt.close('all')
             fig = plt.figure('fake reference')
@@ -5044,18 +5042,19 @@ class KPEDAstrometryPipeline(KPEDPipeline):
 
             self.db_entry['pipelined'][self.name]['location'] = _path_out
 
-            self.db_entry['pipelined'][self.name]['bootstrapped_solution'] = plsq_bootstrap
-            self.db_entry['pipelined'][self.name]['bootstrapped_solution_error'] = err_bootstrap
-            self.db_entry['pipelined'][self.name]['matched_sources'] = matched_sources
-            self.db_entry['pipelined'][self.name]['astrometric_solution']['M'] = M
-            self.db_entry['pipelined'][self.name]['astrometric_solution']['M_m1'] = M_m1
-            self.db_entry['pipelined'][self.name]['astrometric_solution']['tangent_point_sky'] = plsq_bootstrap[:2]
-            self.db_entry['pipelined'][self.name]['astrometric_solution']['tangent_point_pix'] = Y_tan
-            self.db_entry['pipelined'][self.name]['astrometric_solution']['rotatioin_angle'] = theta
-            self.db_entry['pipelined'][self.name]['astrometric_solution']['pixel_scale']['mean'] = s
+            self.db_entry['pipelined'][self.name]['bootstrapped_solution'] = plsq_bootstrap.tolist()
+            self.db_entry['pipelined'][self.name]['bootstrapped_solution_error'] = err_bootstrap.tolist()
+            self.db_entry['pipelined'][self.name]['matched_sources'] = matched_sources.tolist()
+            self.db_entry['pipelined'][self.name]['astrometric_solution']['M'] = M.tolist()
+            self.db_entry['pipelined'][self.name]['astrometric_solution']['M_m1'] = M_m1.tolist()
+            self.db_entry['pipelined'][self.name]['astrometric_solution']['tangent_point_sky'] = \
+                plsq_bootstrap[:2].tolist()
+            self.db_entry['pipelined'][self.name]['astrometric_solution']['tangent_point_pix'] = Y_tan.tolist()
+            self.db_entry['pipelined'][self.name]['astrometric_solution']['rotatioin_angle'] = theta.tolist()
+            self.db_entry['pipelined'][self.name]['astrometric_solution']['pixel_scale']['mean'] = s.tolist()
             self.db_entry['pipelined'][self.name]['astrometric_solution']['pixel_scale']['x'] = abs(R[0, 0]) * 3600
             self.db_entry['pipelined'][self.name]['astrometric_solution']['pixel_scale']['y'] = abs(R[1, 1]) * 3600
-            self.db_entry['pipelined'][self.name]['astrometric_solution']['image_size']['mean'] = size
+            self.db_entry['pipelined'][self.name]['astrometric_solution']['image_size']['mean'] = float(size)
             self.db_entry['pipelined'][self.name]['astrometric_solution']['image_size']['x'] = \
                 abs(R[0, 0]) * 3600 * preview_img.shape[0]
             self.db_entry['pipelined'][self.name]['astrometric_solution']['image_size']['y'] = \
