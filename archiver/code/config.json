@@ -69,7 +69,7 @@
 
   "misc": {
     "archiving_start_date": "2018/06/01",
-    "max_retries": 20,
+    "max_retries": 5,
     "logging_level": "debug",
     "nap_at_night": false,
     "nap_time_frame": "local",
