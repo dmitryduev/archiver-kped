@@ -22,7 +22,7 @@ import os
 import shutil
 import subprocess
 import numpy as np
-from scipy.optimize import fmin
+from scipy.optimize import fmin, leastsq
 from astropy.modeling import models, fitting
 import scipy.ndimage as ndimage
 from scipy.stats import sigmaclip
@@ -42,6 +42,11 @@ from itertools import chain
 import pymongo
 from bson.json_util import loads, dumps
 import re
+from astropy.coordinates import SkyCoord
+import astropy.units as u
+from astropy import wcs
+from astropy.table import Table
+from astropy.convolution import convolve_fft
 from astropy.io import fits
 import pyprind
 import functools
@@ -4085,6 +4090,286 @@ class KPEDAstrometryPipeline(KPEDPipeline):
     def generate_preview(self):
         raise NotImplementedError()
 
+    @staticmethod
+    def generate_image(xy, mag, xy_ast=None, mag_ast=None, exp=None, nx=2048, ny=2048, psf=None):
+        """
+
+        :param xy:
+        :param mag:
+        :param xy_ast:
+        :param mag_ast:
+        :param exp: exposure in seconds to 'normalize' streak
+        :param nx:
+        :param ny:
+        :param psf:
+        :return:
+        """
+
+        if isinstance(xy, list):
+            xy = np.array(xy)
+        if isinstance(mag, list):
+            mag = np.array(mag)
+
+        image = np.zeros((ny, nx))
+
+        # let us assume that a 6 mag star would have a flux of 10^9 counts
+        flux_0 = 1e9
+        # scale other stars wrt that:
+        flux = flux_0 * 10 ** (0.4 * (6 - mag))
+        # print(flux)
+
+        # add stars to image
+        for k, (i, j) in enumerate(xy):
+            if i < nx and j < ny:
+                image[int(j), int(i)] = flux[k]
+
+        if exp is None:
+            exp = 1.0
+
+        if psf is None:
+            # Convolve with a gaussian
+            image = gaussian_filter(image, 7 * nx / 2e3)
+        else:
+            # convolve with a (model) psf
+            # fftn, ifftn = image_registration.fft_tools.fast_ffts.get_ffts(nthreads=4, use_numpy_fft=False)
+            # image = convolve_fft(image, psf, fftn=fftn, ifftn=ifftn)
+            image = convolve_fft(image, psf)
+
+        return image
+
+    def make_image(self, target, window_size, _model_psf, pix_stars, mag_stars, num_pix=1024, fov_size=264):
+        """
+
+        :return:
+        """
+        ''' set up WCS '''
+        # Create a new WCS object.  The number of axes must be set
+        # from the start
+        w = wcs.WCS(naxis=2)
+        w._naxis1 = int(num_pix * (window_size[0] * 180.0 / np.pi * 3600) / fov_size)
+        w._naxis2 = int(num_pix * (window_size[1] * 180.0 / np.pi * 3600) / fov_size)
+        w.naxis1 = w._naxis1
+        w.naxis2 = w._naxis2
+
+        if w.naxis1 > 20000 or w.naxis2 > 20000:
+            print('image too big to plot')
+            return
+
+        # Set up a tangential projection
+        w.wcs.equinox = 2000.0
+        # position of the tangential point on the detector [pix]
+        w.wcs.crpix = np.array([w.naxis1 // 2, w.naxis2 // 2])
+        # sky coordinates of the tangential point
+        w.wcs.crval = [target.ra.deg, target.dec.deg]
+        w.wcs.ctype = ["RA---TAN", "DEC--TAN"]
+
+        ''' create a [fake] simulated image '''
+        # tic = _time()
+        sim_image = self.generate_image(xy=pix_stars, mag=mag_stars, nx=w.naxis1, ny=w.naxis2, psf=_model_psf)
+
+        return sim_image
+
+    def plot_field(self, target, window_size, _model_psf, grid_stars=None,
+                   pix_stars=None, mag_stars=None, a_priori_mapping=False,
+                   num_pix=1024, fov_size=264, _highlight_brighter_than_mag=None,
+                   _display_magnitude_labels=False, scale_bar=False, scale_bar_size=20,
+                   _display_plot=False, _save_plot=False, path='./', name='field'):
+        """
+
+        :return:
+        """
+        ''' set up WCS '''
+        # Create a new WCS object.  The number of axes must be set
+        # from the start
+        w = wcs.WCS(naxis=2)
+        w._naxis1 = int(num_pix * (window_size[0] * 180.0 / np.pi * 3600) / fov_size)
+        w._naxis2 = int(num_pix * (window_size[1] * 180.0 / np.pi * 3600) / fov_size)
+
+        # make even:
+        if w._naxis1 % 2:
+            w._naxis1 += 1
+        if w._naxis2 % 2:
+            w._naxis2 += 1
+
+        w.naxis1 = w._naxis1
+        w.naxis2 = w._naxis2
+        print(w.naxis1, w.naxis2)
+
+        if w.naxis1 > 20000 or w.naxis2 > 20000:
+            print('image too big to plot')
+            return
+
+        # Set up a tangential projection
+        w.wcs.equinox = 2000.0
+        # position of the tangential point on the detector [pix]
+        w.wcs.crpix = np.array([w.naxis1 // 2, w.naxis2 // 2])
+        # sky coordinates of the tangential point
+        w.wcs.crval = [target.ra.deg, target.dec.deg]
+        w.wcs.ctype = ["RA---TAN", "DEC--TAN"]
+        # linear mapping detector :-> focal plane [deg/pix]
+        # with RA inverted to correspond to previews
+        if a_priori_mapping:
+            # a priori mapping derived from first principles:
+            w.wcs.cd = np.array([[-(fov_size / num_pix) / 3600. * 0.999, (fov_size / num_pix) / 3600. * 0.002],
+                                 [(fov_size / num_pix) / 3600. * 0.002, (fov_size / num_pix) / 3600. * 0.999]])
+        else:
+            w.wcs.cd = np.array([[-7.128e-05, -6.729e-07],
+                                 [5.967e-07, 7.121e-05]])
+
+        print(w.wcs.cd)
+
+        # set up quadratic distortions [xy->uv and uv->xy]
+        # w.sip = wcs.Sip(a=np.array([-1.7628536101583434e-06, 5.2721963537675933e-08, -1.2395119995283236e-06]),
+        #                 b=np.array([2.5686775443756446e-05, -6.4405711579912514e-06, 3.6239787339845234e-05]),
+        #                 ap=np.array([-7.8730574242135546e-05, 1.6739809945514789e-06,
+        #                              -1.9638469711488499e-08, 5.6147572815095856e-06,
+        #                              1.1562096854108367e-06]),
+        #                 bp=np.array([1.6917947345178044e-03,
+        #                              -2.6065393907218176e-05, 6.4954883952398105e-06,
+        #                              -4.5911421583810606e-04, -3.5974854928856988e-05]),
+        #                 crpix=w.wcs.crpix)
+
+        ''' create a [fake] simulated image '''
+        # apply linear transformation only:
+        if pix_stars is None:
+            pix_stars = np.array(w.wcs_world2pix(grid_stars['RA'], grid_stars['Dec'], 0)).T
+        # apply linear + SIP:
+        # pix_stars = np.array(w.all_world2pix(grid_stars['RA'], grid_stars['Dec'], 0)).T
+        if mag_stars is None:
+            mag_stars = np.array(grid_stars['mag'])
+        # print(pix_stars)
+        # print(mag_stars)
+
+        # tic = _time()
+        sim_image = self.generate_image(xy=pix_stars, mag=mag_stars,
+                                        nx=w.naxis1, ny=w.naxis2, psf=_model_psf)
+        # print(_time() - tic)
+
+        # tic = _time()
+        # convert simulated image to fits hdu:
+        hdu = fits.PrimaryHDU(sim_image, header=w.to_header())
+
+        ''' plot! '''
+        import aplpy
+        import matplotlib.pyplot as plt
+        # plt.close('all')
+        # plot empty grid defined by wcs:
+        # fig = aplpy.FITSFigure(w)
+        # plot fake image:
+        fig = aplpy.FITSFigure(hdu)
+
+        # fig.set_theme('publication')
+
+        fig.add_grid()
+
+        fig.grid.show()
+        fig.grid.set_color('gray')
+        fig.grid.set_alpha(0.8)
+
+        ''' display field '''
+        # fig.show_colorscale(cmap='viridis')
+        fig.show_colorscale(cmap='magma', stretch='sqrt')
+        # fig.show_grayscale()
+        # fig.show_markers(grid_stars[cat]['_RAJ2000'], grid_stars[cat]['_DEJ2000'],
+        #                  layer='marker_set_1', edgecolor='white',
+        #                  facecolor='white', marker='o', s=30, alpha=0.7)
+
+        # highlight stars bright enough to serve as tip-tilt guide stars:
+        if _highlight_brighter_than_mag is not None and grid_stars is not None:
+            mask_bright = mag_stars <= float(_highlight_brighter_than_mag)
+            if np.max(mask_bright) == 1:
+                fig.show_markers(grid_stars[mask_bright]['RA'], grid_stars[mask_bright]['Dec'],
+                                 layer='marker_set_2', edgecolor=plt.cm.Oranges(0.9),
+                                 facecolor=plt.cm.Oranges(0.8), marker='+', s=50, alpha=0.9, linewidths=1)
+
+        # show labels with magnitudes
+        if _display_magnitude_labels and grid_stars is not None:
+            for star in grid_stars:
+                fig.add_label(star['RA'], star['Dec'], '{:.1f}'.format(star['mag']),
+                              color=plt.cm.Oranges(0.4), horizontalalignment='right')
+
+        # add scale bar
+        if scale_bar:
+            fig.add_scalebar(length=scale_bar_size * u.arcsecond)
+            fig.scalebar.set_alpha(0.7)
+            fig.scalebar.set_color('white')
+            fig.scalebar.set_label('{:d}\"'.format(scale_bar_size))
+
+        # remove frame
+        fig.frame.set_linewidth(0)
+        # print(_time() - tic)
+
+        if _display_plot:
+            plt.show()
+
+        if _save_plot:
+            if not os.path.exists(path):
+                os.makedirs(path)
+            fig.save(os.path.join(path, '{:s}.png'.format(name)))
+            fig.close()
+
+        return pix_stars, mag_stars
+
+    @staticmethod
+    def residual(p, y, x):
+        """
+            Simultaneously solve for RA_tan, DEC_tan, M, and 2nd-order distortion params
+        :param p:
+        :param y:
+        :param x:
+        :return:
+        """
+        # convert (ra, dec)s to 3d
+        r = np.vstack((np.cos(x[:, 0] * np.pi / 180.0) * np.cos(x[:, 1] * np.pi / 180.0),
+                       np.sin(x[:, 0] * np.pi / 180.0) * np.cos(x[:, 1] * np.pi / 180.0),
+                       np.sin(x[:, 1] * np.pi / 180.0))).T
+        # print(r.shape)
+        # print(r)
+
+        # the same for the tangent point
+        t = np.array((np.cos(p[0] * np.pi / 180.0) * np.cos(p[1] * np.pi / 180.0),
+                      np.sin(p[0] * np.pi / 180.0) * np.cos(p[1] * np.pi / 180.0),
+                      np.sin(p[1] * np.pi / 180.0)))
+        # print(t)
+
+        k = np.array([0, 0, 1])
+
+        # u,v projections
+        u = np.cross(t, k) / np.linalg.norm(np.cross(t, k))
+        v = np.cross(u, t)
+        # print(u, v)
+
+        R = r / (np.dot(r, t)[:, None])
+
+        # print(R)
+
+        # native tangent-plane coordinates:
+        UV = 180.0 / np.pi * np.vstack((np.dot(R, u), np.dot(R, v))).T
+
+        # print(UV)
+
+        M_m1 = np.matrix([[p[2], p[3]], [p[4], p[5]]])
+        M = np.linalg.pinv(M_m1)
+        # print(M)
+
+        x_tan = M * np.array([[p[0]], [p[1]]])
+        # x_tan = np.array([[0], [0]])
+        # print(x_tan)
+
+        ksieta = (M_m1 * UV.T).T
+        y_C = []
+
+        for i in range(ksieta.shape[0]):
+            ksi_i = ksieta[i, 0]
+            eta_i = ksieta[i, 1]
+            x_i = ksi_i + x_tan[0]
+            y_i = eta_i + x_tan[1]
+            y_C.append([x_i, y_i])
+        y_C = np.squeeze(np.array(y_C))
+
+        # return np.linalg.norm(y.T - (M_m1 * UV.T + x_tan), axis=0)
+        return np.linalg.norm(y.T - y_C.T, axis=0)
+
     def run(self, part=None):
         """
             Execute specific part of pipeline.
@@ -4099,17 +4384,448 @@ class KPEDAstrometryPipeline(KPEDPipeline):
 
         # UTC date of obs:
         _date = self.db_entry['date_utc'].strftime('%Y%m%d')
+        # source name:
+        _sou_name = self.db_entry['name']
+        # mode num:
+        _mode = self.db_entry['mode']
+        # code of the filter used:
+        _filt = self.db_entry['filter']
 
         # path to archive:
         _path_archive = os.path.join(self.config['path']['path_archive'], _date)
+        _path_registered = os.path.join(_path_archive, self.db_entry['_id'], 'registration')
         # path to output:
         _path_out = os.path.join(_path_archive, self.db_entry['_id'], self.name)
 
+        if not (os.path.exists(_path_out)):
+            os.makedirs(_path_out)
+
         if part == 'astrometry_pipeline':
+            # import here so that it can spawned
+            import matplotlib.pyplot as plt
 
+            _fits_in = f'{self.db_entry["_id"]}_registered_sum.fits'
 
+            # set up sextractor:
+            # use master flat field image for filter as weight map:
+            weight_image = os.path.join(self.config['path']['path_archive'], 'calib', f'flat_{_filt}.fits')
+            sex_config = self.config['pipeline']['astrometry']['sextractor_settings']['config']
+            sex_config['WEIGHT_IMAGE'] = weight_image
 
-            # reduction successful? prepare db entry for update
+            sew = sewpy.SEW(params=self.config['pipeline']['astrometry']['sextractor_settings']['params'],
+                            config=sex_config,
+                            sexpath=self.config['pipeline']['astrometry']['sextractor_settings']['sexpath'])
+
+            out = sew(os.path.join(_path_registered, _fits_in))
+            # sort by raw flux
+            out['table'].sort('FLUX_AUTO')
+            # descending order: first is brightest
+            out['table'].reverse()
+
+            # remove vignetted stuff. use the g band master flat field image
+            weight_image_g = os.path.join(self.config['path']['path_archive'], 'calib', 'flat_g.fits')
+            weights = load_fits(weight_image_g)
+            rows_to_remove = []
+            for ri, row in enumerate(out['table']):
+                x, y = int(row['X_IMAGE']), int(row['Y_IMAGE'])
+                # print(x, y, weights[x, y])
+                if weights[x, y] < self.config['pipeline']['astrometry']['vignetting_cutoff']:
+                    rows_to_remove.append(ri)
+
+            out['table'].remove_rows(rows_to_remove)
+
+            # detected sources:
+            pix_det = np.vstack((out['table']['X_IMAGE'], out['table']['Y_IMAGE'])).T
+            pix_det_err = np.vstack((out['table']['X2_IMAGE'], out['table']['Y2_IMAGE'], out['table']['XY_IMAGE'])).T
+            mag_det = np.array(out['table']['FLUX_AUTO'])
+
+            if self.config['pipeline']['astrometry']['verbose']:
+                print(out['table'])
+
+            # save preview
+            preview_img = load_fits(os.path.join(_path_registered, _fits_in))
+            # print(preview_img.shape)
+            # scale with local contrast optimization for preview:
+            # preview_img = scale_image(preview_img, correction='local')
+            # preview_img = scale_image(preview_img, correction='log')
+            # preview_img = scale_image(preview_img, correction='global')
+
+            plt.close('all')
+            fig = plt.figure()
+            fig.set_size_inches(4, 4, forward=False)
+            ax = plt.Axes(fig, [0., 0., 1., 1.])
+            ax.set_axis_off()
+            fig.add_axes(ax)
+            # plot detected objects:
+            for i, _ in enumerate(out['table']['XWIN_IMAGE']):
+                ax.plot(out['table']['X_IMAGE'][i] - 1, out['table']['Y_IMAGE'][i] - 1,
+                        'o', markersize=out['table']['FWHM_IMAGE'][i] / 2,
+                        markeredgewidth=2.5, markerfacecolor='None', markeredgecolor=plt.cm.Greens(0.7),
+                        label='SExtracted')
+                # ax.annotate(i, (out['table']['X_IMAGE'][i]+40, out['table']['Y_IMAGE'][i]+40),
+                #             color=plt.cm.Blues(0.3), backgroundcolor='black')
+
+            preview_img_zerod = preview_img
+            preview_img_zerod[preview_img_zerod < np.median(np.median(preview_img_zerod)) * 0.5] = 0.01
+            ax.imshow(np.sqrt(np.sqrt(preview_img_zerod)), cmap=plt.cm.magma, origin='lower', interpolation='nearest')
+
+            plt.grid(False)
+
+            # save figure
+            fname = '{:s}_registered_sex.png'.format(_obs)
+            plt.savefig(os.path.join(_path_out, fname), dpi=300)
+
+            ''' get stars from Gaia DR2 catalogue, create fake images, then cross correlate them '''
+            # stars in the field (without mag cut-off):
+            if self.config['pipeline']['astrometry']['fov_center'] == 'telescope':
+                # use whatever reported by telescope
+                header = get_fits_header(os.path.join(_path_registered,
+                                                      f'{self.db_entry["_id"]}_registered_0000.fits'))[0]
+                star_sc = SkyCoord(ra=header['TELRA'][0], dec=header['TELDEC'][0],
+                                   unit=(u.hourangle, u.deg), frame='icrs')
+            elif self.config['pipeline']['astrometry']['fov_center'] == 'starlist':
+                # use Michael's starlist:
+                observed = parse_observed_dat(os.path.join(_config['path']['path_archive'], 'observed.dat'))
+                star_sc = SkyCoord(ra=observed[_sou_name][0], dec=observed[_sou_name][1], unit=(u.deg, u.deg),
+                                   frame='icrs')
+
+            if self.config['pipeline']['astrometry']['verbose']:
+                print('nominal FoV center', star_sc)
+                # print(star_sc.ra.deg, star_sc.dec.deg)
+
+            # search radius*2: " -> rad
+            fov_size_ref_arcsec = self.config['pipeline']['astrometry']['reference_win_size']
+            fov_size_ref = fov_size_ref_arcsec * np.pi / 180.0 / 3600
+
+            fov_stars = query_reference_catalog(_star_sc=star_sc, _fov_size_ref_arcsec=fov_size_ref_arcsec, retries=3)
+
+            # convert to astropy table:
+            fov_stars = np.array([[fov_star['source_id'], fov_star['ra'], fov_star['dec'],
+                                   fov_star['ra_error'], fov_star['dec_error'], fov_star['phot_g_mean_mag']]
+                                  for fov_star in fov_stars])
+            fov_stars = Table(fov_stars, names=('source_id', 'RA', 'Dec', 'e_RA', 'e_Dec', 'mag'))
+            if self.config['pipeline']['astrometry']['verbose']:
+                print(fov_stars)
+
+            pix_ref, mag_ref = plot_field(target=star_sc, window_size=[fov_size_ref, fov_size_ref], _model_psf=None,
+                                          grid_stars=fov_stars, num_pix=preview_img.shape[0],
+                                          _highlight_brighter_than_mag=None,
+                                          scale_bar=False, scale_bar_size=20, _display_plot=False, _save_plot=False,
+                                          path='./', name='field')
+
+            ''' detect shift '''
+            fov_size_arcsec = self.config['telescope']['KPNO_2.1m']['fov_x']
+            fov_size_det = fov_size_arcsec * np.pi / 180.0 / 3600
+            mag_det /= np.median(mag_det)
+            mag_det = -2.5 * np.log10(mag_det)
+            # add (pretty arbitrary) baseline from ref
+            mag_det += np.median(mag_ref)
+
+            naxis_det = int(preview_img.shape[0] * (fov_size_det * 180.0 / np.pi * 3600) / fov_size_arcsec)
+            naxis_ref = int(preview_img.shape[0] * (fov_size_ref * 180.0 / np.pi * 3600) / fov_size_arcsec)
+            if self.config['pipeline']['astrometry']['verbose']:
+                print(naxis_det, naxis_ref)
+            # effectively shift detected positions to center of ref frame to reduce distortion effect
+            pix_det_ref = pix_det + np.array([naxis_ref // 2, naxis_ref // 2]) - np.array(
+                [naxis_det // 2, naxis_det // 2])
+            # pix_det_ref = pix_det
+            detected = make_image(target=star_sc, window_size=[fov_size_ref, fov_size_ref], _model_psf=None,
+                                  pix_stars=pix_det_ref, mag_stars=mag_det, num_pix=preview_img.shape[0])
+            reference = make_image(target=star_sc, window_size=[fov_size_ref, fov_size_ref], _model_psf=None,
+                                   pix_stars=pix_ref, mag_stars=mag_ref, num_pix=preview_img.shape[0])
+
+            detected[detected == 0] = 0.0001
+            detected[np.isnan(detected)] = 0.0001
+            detected = np.log(detected)
+
+            reference[reference == 0] = 0.0001
+            reference[np.isnan(reference)] = 0.0001
+            reference = np.log(reference)
+
+            # register shift: pixel precision first
+            shift, error, diffphase = register_translation(reference, detected, upsample_factor=1)
+            if self.config['pipeline']['astrometry']['verbose']:
+                print('pixel precision offset:', shift, error)
+            # shift, error, diffphase = register_translation(reference, detected, upsample_factor=2)
+            # print('subpixel precision offset:', shift, error)
+
+            # associate!
+            matched = []
+            mask_matched = []
+            for si, s in enumerate(pix_det_ref):
+                s_shifted = s + np.array(shift[::-1])
+
+                pix_distance = np.min(np.linalg.norm(pix_ref - s_shifted, axis=1))
+                if self.config['pipeline']['astrometry']['verbose']:
+                    print(pix_distance)
+
+                if pix_distance < self.config['pipeline']['astrometry']['max_pix_distance_for_match']:
+                    min_ind = np.argmin(np.linalg.norm(pix_ref - s_shifted, axis=1))
+
+                    # note: errors in Gaia position are given in mas, so convert to deg by  / 1e3 / 3600
+                    matched.append(np.hstack([pix_det[si], pix_det_err[si],
+                                              np.array([fov_stars['RA'][min_ind],
+                                                        fov_stars['Dec'][min_ind],
+                                                        fov_stars['e_RA'][min_ind] / 1e3 / 3600,
+                                                        fov_stars['e_Dec'][min_ind] / 1e3 / 3600,
+                                                        fov_stars['mag'][min_ind],
+                                                        fov_stars['source_id'][min_ind]])]))
+                    # fov_stars['RADEcor'][min_ind]])]))
+                    mask_matched.append(min_ind)
+
+            matched = np.array(matched)
+            if self.config['pipeline']['astrometry']['verbose']:
+                # print(matched)
+                print('total matched:', len(matched))
+
+            ''' plot and save fake images used to detect shift '''
+            plt.close('all')
+            fig = plt.figure('fake detected')
+            fig.set_size_inches(4, 4, forward=False)
+            ax = plt.Axes(fig, [0., 0., 1., 1.])
+            ax.set_axis_off()
+            fig.add_axes(ax)
+            ax.imshow(self.scale_image(detected, correction='local'), cmap=plt.cm.magma, origin='lower',
+                      interpolation='nearest')
+            # save figure
+            fname = '{:s}_fake_detected.png'.format(_obs)
+            plt.savefig(os.path.join(_path_out, fname), dpi=300)
+
+            # apply shift:
+            _nthreads = multiprocessing.cpu_count()
+            shifted = image_registration.fft_tools.shiftnd(detected, (shift[0], shift[1]),
+                                                           nthreads=_nthreads, use_numpy_fft=False)
+            plt.close('all')
+            fig = plt.figure('fake detected with estimated offset')
+            fig.set_size_inches(4, 4, forward=False)
+            ax = plt.Axes(fig, [0., 0., 1., 1.])
+            ax.set_axis_off()
+            fig.add_axes(ax)
+            ax.imshow(self.scale_image(shifted, correction='local'), cmap=plt.cm.magma, origin='lower',
+                      interpolation='nearest')
+            # save figure
+            fname = '{:s}_fake_detected_offset.png'.format(_obs)
+            plt.savefig(os.path.join(_path_out, fname), dpi=300)
+
+            plt.close('all')
+            fig = plt.figure('fake reference')
+            fig.set_size_inches(4, 4, forward=False)
+            ax = plt.Axes(fig, [0., 0., 1., 1.])
+            ax.set_axis_off()
+            fig.add_axes(ax)
+            ax.imshow(self.scale_image(reference, correction='local'), cmap=plt.cm.magma, origin='lower',
+                      interpolation='nearest')
+            # save figure
+            fname = '{:s}_fake_reference.png'.format(_obs)
+            plt.savefig(os.path.join(_path_out, fname), dpi=300)
+
+            ''' solve field '''
+            # a priori RA/Dec positions:
+            X = matched[:, 5:7]
+            # Gaia source ids and mags for bookkeeping/final matches:
+            source_ids = matched[:, -1]
+            source_mags = matched[:, -2]
+            # measured CCD positions centered around zero:
+            Y = matched[:, 0:2] - (np.array(preview_img.shape) / 2.0)
+
+            # initial parameters of the linear transform + distortion:
+            # p0 = np.array([star_sc.ra.deg, star_sc.dec.deg,
+            #                -1. / ((264. / 1024.) / 3600. * 0.999),
+            #                1. / ((264. / 1024.) / 3600. * 0.002),
+            #                1. / ((264. / 1024.) / 3600. * 0.002),
+            #                1. / ((264. / 1024.) / 3600. * 0.999),
+            #                1e-7, 1e-7, 1e-7, 1e-7, 1e-7,
+            #                1e-2, 1e-5, 1e-7, 1e-7, 1e-5])
+            # initial parameters of the linear transform:
+            p0 = np.array([star_sc.ra.deg, star_sc.dec.deg,
+                           -1. / ((fov_size_arcsec / 1024.) / 3600.) * 0.999,
+                           1. / ((fov_size_arcsec / 1024.) / 3600.) * 0.002,
+                           1. / ((fov_size_arcsec / 1024.) / 3600.) * 0.002,
+                           1. / ((fov_size_arcsec / 1024.) / 3600.) * 0.999])
+
+            ''' estimate linear transform parameters'''
+            # TODO: add weights depending on sextractor error?
+            # scaling params to help leastsq land on a good solution
+            scaling = [1e-2, 1e-2, 1e-5, 1e-3, 1e-3, 1e-5]
+            if self.config['pipeline']['astrometry']['verbose']:
+                print('solving with LSQ to get initial parameter estimates')
+            plsq = leastsq(residual, p0, args=(Y, X), ftol=1.49012e-13, xtol=1.49012e-13, full_output=True,
+                           diag=scaling)
+            # print(plsq)
+            if self.config['pipeline']['astrometry']['verbose']:
+                print(plsq[0])
+            # residuals = residual(plsq[0], Y, X)
+            residuals = plsq[2]['fvec']
+            if self.config['pipeline']['astrometry']['verbose']:
+                print('residuals:')
+                print(residuals)
+
+            for jj in range(int(self.config['pipeline']['astrometry']['outlier_flagging_passes'])):
+                # identify outliers. they are likely to be false identifications, so discard them and redo the fit
+                print('flagging outliers and refitting, take {:d}'.format(jj + 1))
+                mask_outliers = residuals <= self.config['pipeline']['astrometry']['outlier_pix']  # pix
+
+                # flag:
+                X = X[mask_outliers, :]
+                Y = Y[mask_outliers, :]
+                source_ids = source_ids[mask_outliers]
+                source_mags = source_mags[mask_outliers]
+
+                # plsq = leastsq(residual, p0, args=(Y, X), ftol=1.49012e-13, xtol=1.49012e-13, full_output=True)
+                plsq = leastsq(residual, plsq[0], args=(Y, X), ftol=1.49012e-13, xtol=1.49012e-13, full_output=True)
+                if self.config['pipeline']['astrometry']['verbose']:
+                    print(plsq[0])
+                # residuals = residual(plsq[0], Y, X)
+                residuals = plsq[2]['fvec']
+                if self.config['pipeline']['astrometry']['verbose']:
+                    print('residuals:')
+                    print(residuals)
+
+                # get an estimate of the covariance matrix:
+                pcov = plsq[1]
+                if (len(X) > len(p0)) and pcov is not None:
+                    s_sq = (residuals ** 2).sum() / (len(X) - len(p0))
+                    pcov = pcov * s_sq
+                else:
+                    pcov = np.inf
+                if self.config['pipeline']['astrometry']['verbose']:
+                    print('covariance matrix diagonal estimate:')
+                    # print(pcov)
+                    print(pcov.diagonal())
+
+            # apply bootstrap to get a reasonable estimate of what the errors of the estimated parameters are
+            if self.config['pipeline']['astrometry']['verbose']:
+                print('solving with LSQ bootstrap')
+            # plsq_bootstrap, err_bootstrap = fit_bootstrap(residual, p0, Y, X, yerr_systematic=0.0, n_samp=100)
+            n_samp = self.config['pipeline']['astrometry']['bootstrap']['n_samp']
+            Nsigma = self.config['pipeline']['astrometry']['bootstrap']['Nsigma']
+            plsq_bootstrap, err_bootstrap = fit_bootstrap(residual, plsq[0], Y, X,
+                                                          yerr_systematic=0.0, n_samp=n_samp, Nsigma=Nsigma)
+            if self.config['pipeline']['astrometry']['verbose']:
+                print(plsq_bootstrap)
+                print(err_bootstrap)
+            residuals = residual(plsq_bootstrap, Y, X)
+            if self.config['pipeline']['astrometry']['verbose']:
+                print('residuals:')
+                print(residuals)
+
+            # use bootstrapped solution as the final solution:
+            plsq = (plsq_bootstrap, err_bootstrap, plsq[2:])
+
+            ''' plot the result '''
+            M_m1 = np.matrix([[plsq[0][2], plsq[0][3]], [plsq[0][4], plsq[0][5]]])
+            M = np.linalg.pinv(M_m1)
+            if self.config['pipeline']['astrometry']['verbose']:
+                print('M:', M)
+                print('M^-1:', M_m1)
+
+            Q, R = np.linalg.qr(M)
+            # print('Q:', Q)
+            # print('R:', R)
+
+            Y_C = compute_detector_position(plsq[0], X).T + preview_img.shape[0] / 2
+            Y_tan = compute_detector_position(plsq[0], np.array([list(plsq[0][0:2])])).T + preview_img.shape[0] / 2
+            # print(Y_C)
+            if self.config['pipeline']['astrometry']['verbose']:
+                print('Tangent point pixel position: ', Y_tan)
+            # print('max UV: ', compute_detector_position(plsq[0], np.array([[205.573314, 28.370672],
+            #                                                                [205.564369, 28.361843]])))
+
+            theta = np.arccos(Q[1, 1]) * 180 / np.pi
+            s = np.mean((abs(R[0, 0]), abs(R[1, 1]))) * 3600
+            size = s * preview_img.shape[0]
+
+            if self.config['pipeline']['astrometry']['verbose']:
+                print('Estimate linear transformation:')
+                print('rotation angle: {:.5f} degrees'.format(theta))
+                print('pixel scale: {:.7f}\" -- mean, {:.7f}\" -- x, {:.7f}\" -- y'.format(s,
+                                                                                           abs(R[0, 0]) * 3600,
+                                                                                           abs(R[1, 1]) * 3600))
+                print('image size for mean pixel scale: {:.4f}\" x {:.4f}\"'.format(size, size))
+                print('image size: {:.4f}\" x {:.4f}\"'.format(abs(R[0, 0]) * 3600 * preview_img.shape[0],
+                                                               abs(R[1, 1]) * 3600 * preview_img.shape[1]))
+
+            ''' matches: '''
+            # Gaia_DR2_source_id Gaia_DR2_source_G_mag Gaia_DR2_ra_dec ccd_pixel_positions
+            matched_sources = np.hstack((np.expand_dims(source_ids, axis=1),
+                                         np.expand_dims(source_mags, axis=1),
+                                         X, Y + (np.array(preview_img.shape) / 2.0)))
+            if self.config['pipeline']['astrometry']['verbose']:
+                print('Matched sources with Gaia DR2:')
+                print(matched_sources)
+
+            ''' test the solution '''
+            fov_center = SkyCoord(ra=plsq[0][0], dec=plsq[0][1], unit=(u.deg, u.deg), frame='icrs')
+            detected_solution = make_image(target=fov_center, window_size=[fov_size_det, fov_size_det], _model_psf=None,
+                                           pix_stars=pix_det, mag_stars=mag_det, num_pix=preview_img.shape[0])
+            detected_solution[detected_solution == 0] = 0.0001
+            detected_solution[np.isnan(detected_solution)] = 0.0001
+            detected_solution = np.log(detected_solution)
+
+            plt.close('all')
+            fig = plt.figure('detected stars')
+            fig.set_size_inches(4, 4, forward=False)
+            ax = plt.Axes(fig, [0., 0., 1., 1.])
+            ax.set_axis_off()
+            fig.add_axes(ax)
+            ax.imshow(self.scale_image(detected_solution, correction='local'), cmap=plt.cm.magma,
+                      origin='lower', interpolation='nearest')
+            ax.plot(Y_C[:, 0], Y_C[:, 1], 'o', markersize=6,
+                    markeredgewidth=1, markerfacecolor='None', markeredgecolor=plt.cm.Blues(0.8),
+                    label='Linear transformation')
+
+            # save figure
+            fname = '{:s}_detections_solved.png'.format(self.db_entry['_id'])
+            plt.savefig(os.path.join(_path_out, fname), dpi=300)
+
+            ''' add WCS to registered image '''
+            # good solution?
+            # tangent point position error < 1"?
+            tan_point_error_ok = np.max(err_bootstrap[:2]) < 3e-4
+            # linear mapping error < 30 pixel/degree (corresponds to error of ~2 pixel/FoV)?
+            linear_mapping_error_ok = np.max(err_bootstrap[2:]) < 30
+
+            if tan_point_error_ok and linear_mapping_error_ok:
+                if self.config['pipeline']['astrometry']['verbose']:
+                    print('Solution OK, adding WCS to registered image')
+
+                # mapping parameters:
+                RA_tan, Dec_tan, M_11, M_12, M_21, M_22 = plsq_bootstrap[0], plsq_bootstrap[1], \
+                                                          M[0, 0], M[0, 1], M[1, 0], M[1, 1]
+                x_tan, y_tan = Y_tan
+
+                nx, ny = preview_img.shape
+
+                w = wcs.WCS(naxis=2)
+                w._naxis1 = nx
+                w._naxis2 = ny
+                w.naxis1 = w._naxis1
+                w.naxis2 = w._naxis2
+
+                w.wcs.radesys = 'ICRS'
+                w.wcs.equinox = 2000.0
+                # position of the tangential point on the detector [pix]
+                w.wcs.crpix = np.array([x_tan, y_tan])
+
+                # sky coordinates of the tangential point;
+                w.wcs.crval = [RA_tan, Dec_tan]
+                # w.wcs.ctype = ["RA---TAN-SIP", "DEC--TAN-SIP"]
+                w.wcs.ctype = ["RA---TAN", "DEC--TAN"]
+                # linear mapping detector :-> focal plane [deg/pix]
+                w.wcs.cd = np.array([[M_11, M_12],
+                                     [M_21, M_22]])
+
+                # turn WCS object into header
+                new_header = w.to_header(relax=True)
+                # merge with old header:
+                # for key in header.keys():
+                #     new_header[key] = header[key]
+
+                export_fits(os.path.join(_path_registered,
+                                         f'{self.db_entry["_id"]}_registered_sum.wcs.fits'), preview_img,
+                            _header=new_header)
+
+            ''' reduction successful? prepare db entry for update '''
             self.db_entry['pipelined'][self.name]['status']['done'] = True
             self.db_entry['pipelined'][self.name]['status']['enqueued'] = False
             self.db_entry['pipelined'][self.name]['status']['force_redo'] = False

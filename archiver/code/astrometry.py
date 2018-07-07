@@ -147,7 +147,7 @@ def generate_image(xy, mag, xy_ast=None, mag_ast=None, exp=None, nx=2048, ny=204
     return image
 
 
-def make_image(target, window_size, _model_psf, pix_stars, mag_stars, num_pix=1024):
+def make_image(target, window_size, _model_psf, pix_stars, mag_stars, num_pix=1024, fov_size=264):
     """
 
     :return:
@@ -156,8 +156,8 @@ def make_image(target, window_size, _model_psf, pix_stars, mag_stars, num_pix=10
     # Create a new WCS object.  The number of axes must be set
     # from the start
     w = wcs.WCS(naxis=2)
-    w._naxis1 = int(num_pix * (window_size[0] * 180.0 / np.pi * 3600) / 264)
-    w._naxis2 = int(num_pix * (window_size[1] * 180.0 / np.pi * 3600) / 264)
+    w._naxis1 = int(num_pix * (window_size[0] * 180.0 / np.pi * 3600) / fov_size)
+    w._naxis2 = int(num_pix * (window_size[1] * 180.0 / np.pi * 3600) / fov_size)
     w.naxis1 = w._naxis1
     w.naxis2 = w._naxis2
 
@@ -182,7 +182,7 @@ def make_image(target, window_size, _model_psf, pix_stars, mag_stars, num_pix=10
 
 def plot_field(target, window_size, _model_psf, grid_stars=None,
                pix_stars=None, mag_stars=None, a_priori_mapping=False,
-               num_pix=1024, _highlight_brighter_than_mag=None,
+               num_pix=1024, fov_size=264, _highlight_brighter_than_mag=None,
                _display_magnitude_labels=False, scale_bar=False, scale_bar_size=20,
                _display_plot=False, _save_plot=False, path='./', name='field'):
     """
@@ -193,8 +193,8 @@ def plot_field(target, window_size, _model_psf, grid_stars=None,
     # Create a new WCS object.  The number of axes must be set
     # from the start
     w = wcs.WCS(naxis=2)
-    w._naxis1 = int(num_pix * (window_size[0] * 180.0 / np.pi * 3600) / 264)
-    w._naxis2 = int(num_pix * (window_size[1] * 180.0 / np.pi * 3600) / 264)
+    w._naxis1 = int(num_pix * (window_size[0] * 180.0 / np.pi * 3600) / fov_size)
+    w._naxis2 = int(num_pix * (window_size[1] * 180.0 / np.pi * 3600) / fov_size)
 
     # make even:
     if w._naxis1 % 2:
@@ -221,8 +221,8 @@ def plot_field(target, window_size, _model_psf, grid_stars=None,
     # with RA inverted to correspond to previews
     if a_priori_mapping:
         # a priori mapping derived from first principles:
-        w.wcs.cd = np.array([[-(264. / 1024.) / 3600. * 0.999, (264. / 1024.) / 3600. * 0.002],
-                             [(264. / 1024.) / 3600. * 0.002, (264. / 1024.) / 3600. * 0.999]])
+        w.wcs.cd = np.array([[-(fov_size / num_pix) / 3600. * 0.999, (fov_size / num_pix) / 3600. * 0.002],
+                             [(fov_size / num_pix) / 3600. * 0.002, (fov_size / num_pix) / 3600. * 0.999]])
     else:
         w.wcs.cd = np.array([[-7.128e-05, -6.729e-07],
                              [ 5.967e-07,  7.121e-05]])
