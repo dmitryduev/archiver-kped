@@ -2612,6 +2612,30 @@ class KPEDObservation(Observation):
 
         # Photometry?
         ''' Astrometry pipeline '''
+        pipe = KPEDAstrometryPipeline(_config=self.config, _db_entry=self.db_entry)
+        # check conditions necessary to run (defined in config.json):
+        go = pipe.check_necessary_conditions()
+        # print('{:s} RP go: '.format(self.id), go)
+
+        # good to go?
+        if go:
+            # should and can run RP pipeline itself?
+            _part = 'astrometry_pipeline'
+            go = pipe.check_conditions(part=_part)
+            if go:
+                # mark enqueued
+                pipe.db_entry['pipelined']['{:s}'.format(pipe.name)]['status']['enqueued'] = True
+                # pipe.db_entry['pipelined']['{:s}'.format(pipe.name)]['last_modified'] = utc_now()
+                _task = {'task': _part, 'id': self.id, 'config': self.config, 'db_entry': pipe.db_entry,
+                         'db_record_update': ({'_id': self.id},
+                                              {'$set': {
+                                                  'pipelined.{:s}'.format(pipe.name):
+                                                      pipe.db_entry['pipelined']['{:s}'.format(pipe.name)]
+                                              }}
+                                              )
+                         }
+                _task_to_compute_hash = {'task': _part, 'id': self.id, 'config': self.config}
+                return _task, _task_to_compute_hash
 
         return _task, _task_to_compute_hash
 
