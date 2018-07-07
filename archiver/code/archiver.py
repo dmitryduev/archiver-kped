@@ -6,6 +6,7 @@
 
 import matplotlib
 matplotlib.use('Agg')
+import multiprocessing
 import argparse
 import signal
 import timeout_decorator
@@ -48,6 +49,7 @@ from astropy import wcs
 from astropy.table import Table
 from astropy.convolution import convolve_fft
 from astropy.io import fits
+from skimage.feature import register_translation
 import pyprind
 import functools
 import hashlib
@@ -4066,8 +4068,7 @@ class KPEDAstrometryPipeline(KPEDPipeline):
             'location': [],
             'bootstrapped_solution': None,
             'bootstrapped_solution_error': None,
-            'residuals': None,
-            'matches': None,
+            'matched_sources': None,
             'astrometric_solution': {
                 'M': None,
                 'M_m1': None,
@@ -4370,6 +4371,154 @@ class KPEDAstrometryPipeline(KPEDPipeline):
         # return np.linalg.norm(y.T - (M_m1 * UV.T + x_tan), axis=0)
         return np.linalg.norm(y.T - y_C.T, axis=0)
 
+    @staticmethod
+    def compute_detector_position(p, x, quadratic=False):
+        # convert (ra, dec)s to 3d
+        r = np.vstack((np.cos(x[:, 0] * np.pi / 180.0) * np.cos(x[:, 1] * np.pi / 180.0),
+                       np.sin(x[:, 0] * np.pi / 180.0) * np.cos(x[:, 1] * np.pi / 180.0),
+                       np.sin(x[:, 1] * np.pi / 180.0))).T
+        # print(r.shape)
+        # print(r)
+
+        # the same for the tangent point
+        t = np.array((np.cos(p[0] * np.pi / 180.0) * np.cos(p[1] * np.pi / 180.0),
+                      np.sin(p[0] * np.pi / 180.0) * np.cos(p[1] * np.pi / 180.0),
+                      np.sin(p[1] * np.pi / 180.0)))
+        # print(t)
+
+        k = np.array([0, 0, 1])
+
+        # u,v projections
+        u = np.cross(t, k) / np.linalg.norm(np.cross(t, k))
+        v = np.cross(u, t)
+        # print(u, v)
+
+        R = r / (np.dot(r, t)[:, None])
+
+        # print(R)
+
+        # native tangent-plane coordinates:
+        UV = 180.0 / np.pi * np.vstack((np.dot(R, u), np.dot(R, v))).T
+
+        # print('UV: ', UV)
+
+        M_m1 = np.matrix([[p[2], p[3]], [p[4], p[5]]])
+        M = np.linalg.pinv(M_m1)
+        # print(M)
+
+        x_tan = M * np.array([[p[0]], [p[1]]])
+        # x_tan = np.array([[0], [0]])
+
+        ksieta = (M_m1 * UV.T).T
+        y_C = []
+        if quadratic:
+            A_01, A_02, A_11, A_10, A_20, B_01, B_02, B_11, B_10, B_20 = p[6:]
+
+        for i in range(ksieta.shape[0]):
+            ksi_i = ksieta[i, 0]
+            eta_i = ksieta[i, 1]
+            if quadratic:
+                x_i = ksi_i + x_tan[0] + A_01 * eta_i + A_02 * eta_i ** 2 + A_11 * ksi_i * eta_i \
+                      + A_10 * ksi_i + A_20 * ksi_i ** 2
+                y_i = eta_i + x_tan[1] + B_01 * eta_i + B_02 * eta_i ** 2 + B_11 * ksi_i * eta_i \
+                      + B_10 * ksi_i + B_20 * ksi_i ** 2
+            else:
+                x_i = ksi_i + x_tan[0]
+                y_i = eta_i + x_tan[1]
+
+            y_C.append([x_i, y_i])
+
+        y_C = np.squeeze(np.array(y_C))
+
+        return y_C.T
+
+    @staticmethod
+    def fit_bootstrap(_residual, p0, datax, datay, yerr_systematic=0.0, n_samp=100, _scaling=None, Nsigma=1.):
+        # Fit first time
+        _p = leastsq(_residual, p0, args=(datax, datay), full_output=True, ftol=1.49012e-13, xtol=1.49012e-13)
+
+        pfit, perr = _p[0], _p[1]
+
+        # Get the stdev of the residuals
+        residuals = _residual(pfit, datax, datay)
+        sigma_res = np.std(residuals)
+
+        sigma_err_total = np.sqrt(sigma_res ** 2 + yerr_systematic ** 2)
+
+        # n_samp random data sets are generated and fitted
+        ps = []
+        # print('lala')
+        # print(datay)
+        for ii in range(n_samp):
+            randomDelta = np.random.normal(0., sigma_err_total, size=datax.shape)
+            # print(ii)
+            randomdataX = datax + randomDelta
+            # print(randomDelta)
+            # raw_input()
+
+            _p = leastsq(_residual, p0, args=(randomdataX, datay), full_output=True,
+                         ftol=1.49012e-13, xtol=1.49012e-13, diag=_scaling)
+            randomfit, randomcov = _p[0], _p[1]
+
+            ps.append(randomfit)
+
+        ps = np.array(ps)
+        mean_pfit = np.mean(ps, 0)
+
+        # You can choose the confidence interval that you want for your
+        # parameter estimates:
+        # 1sigma corresponds to 68.3% confidence interval
+        # 2sigma corresponds to 95.44% confidence interval
+
+        err_pfit = Nsigma * np.std(ps, 0)
+
+        pfit_bootstrap = mean_pfit
+        perr_bootstrap = err_pfit
+
+        return pfit_bootstrap, perr_bootstrap
+
+    @staticmethod
+    def parse_observed_dat(_fin):
+        with open(_fin) as _f:
+            _f_lines = _f.readlines()
+
+        _sources = dict()
+        for _l in _f_lines:
+            _tmp = _l.split()
+            _sources[_tmp[0]] = list(map(float, _tmp[1:]))
+
+        return _sources
+
+    @staticmethod
+    def query_reference_catalog(_star_sc, _fov_size_ref_arcsec, retries=3):
+
+        for ir in range(retries):
+            try:
+                print(f'Querying Kowalski, attempt {ir+1}')
+                # query Kowalski for Gaia stars:
+                with Kowalski(username=secrets['kowalski']['user'],
+                              password=secrets['kowalski']['password']) as kowalski:
+                    # if False:
+                    q = {"query_type": "cone_search",
+                         "object_coordinates": {"radec": f"[({_star_sc.ra.deg}, {_star_sc.dec.deg})]",
+                                                "cone_search_radius": str(_fov_size_ref_arcsec / 2),
+                                                "cone_search_unit": "arcsec"},
+                         "catalogs": {"Gaia_DR2": {"filter": {},
+                                                   "projection": {"_id": 0, "source_id": 1,
+                                                                  "ra": 1, "dec": 1, "ra_error": 1, "dec_error": 1,
+                                                                  "phot_g_mean_mag": 1}}}
+                         }
+                    r = kowalski.query(query=q, timeout=10)
+                    key = list(r['result']['Gaia_DR2'].keys())[0]
+                    fov_stars = r['result']['Gaia_DR2'][key]
+
+                    return fov_stars
+            except Exception as _e:
+                print(_e)
+                continue
+
+        return None
+
     def run(self, part=None):
         """
             Execute specific part of pipeline.
@@ -4472,7 +4621,7 @@ class KPEDAstrometryPipeline(KPEDPipeline):
             plt.grid(False)
 
             # save figure
-            fname = '{:s}_registered_sex.png'.format(_obs)
+            fname = '{:s}_registered_sex.png'.format(self.db_entry['_id'])
             plt.savefig(os.path.join(_path_out, fname), dpi=300)
 
             ''' get stars from Gaia DR2 catalogue, create fake images, then cross correlate them '''
@@ -4485,7 +4634,7 @@ class KPEDAstrometryPipeline(KPEDPipeline):
                                    unit=(u.hourangle, u.deg), frame='icrs')
             elif self.config['pipeline']['astrometry']['fov_center'] == 'starlist':
                 # use Michael's starlist:
-                observed = parse_observed_dat(os.path.join(_config['path']['path_archive'], 'observed.dat'))
+                observed = self.parse_observed_dat(os.path.join(self.config['path']['path_archive'], 'observed.dat'))
                 star_sc = SkyCoord(ra=observed[_sou_name][0], dec=observed[_sou_name][1], unit=(u.deg, u.deg),
                                    frame='icrs')
 
@@ -4497,7 +4646,8 @@ class KPEDAstrometryPipeline(KPEDPipeline):
             fov_size_ref_arcsec = self.config['pipeline']['astrometry']['reference_win_size']
             fov_size_ref = fov_size_ref_arcsec * np.pi / 180.0 / 3600
 
-            fov_stars = query_reference_catalog(_star_sc=star_sc, _fov_size_ref_arcsec=fov_size_ref_arcsec, retries=3)
+            fov_stars = self.query_reference_catalog(_star_sc=star_sc,
+                                                     _fov_size_ref_arcsec=fov_size_ref_arcsec, retries=3)
 
             # convert to astropy table:
             fov_stars = np.array([[fov_star['source_id'], fov_star['ra'], fov_star['dec'],
@@ -4507,11 +4657,11 @@ class KPEDAstrometryPipeline(KPEDPipeline):
             if self.config['pipeline']['astrometry']['verbose']:
                 print(fov_stars)
 
-            pix_ref, mag_ref = plot_field(target=star_sc, window_size=[fov_size_ref, fov_size_ref], _model_psf=None,
-                                          grid_stars=fov_stars, num_pix=preview_img.shape[0],
-                                          _highlight_brighter_than_mag=None,
-                                          scale_bar=False, scale_bar_size=20, _display_plot=False, _save_plot=False,
-                                          path='./', name='field')
+            pix_ref, mag_ref = self.plot_field(target=star_sc, window_size=[fov_size_ref, fov_size_ref],
+                                               _model_psf=None, grid_stars=fov_stars, num_pix=preview_img.shape[0],
+                                               _highlight_brighter_than_mag=None,
+                                               scale_bar=False, scale_bar_size=20, _display_plot=False,
+                                               _save_plot=False, path='./', name='field')
 
             ''' detect shift '''
             fov_size_arcsec = self.config['telescope']['KPNO_2.1m']['fov_x']
@@ -4529,10 +4679,10 @@ class KPEDAstrometryPipeline(KPEDPipeline):
             pix_det_ref = pix_det + np.array([naxis_ref // 2, naxis_ref // 2]) - np.array(
                 [naxis_det // 2, naxis_det // 2])
             # pix_det_ref = pix_det
-            detected = make_image(target=star_sc, window_size=[fov_size_ref, fov_size_ref], _model_psf=None,
-                                  pix_stars=pix_det_ref, mag_stars=mag_det, num_pix=preview_img.shape[0])
-            reference = make_image(target=star_sc, window_size=[fov_size_ref, fov_size_ref], _model_psf=None,
-                                   pix_stars=pix_ref, mag_stars=mag_ref, num_pix=preview_img.shape[0])
+            detected = self.make_image(target=star_sc, window_size=[fov_size_ref, fov_size_ref], _model_psf=None,
+                                       pix_stars=pix_det_ref, mag_stars=mag_det, num_pix=preview_img.shape[0])
+            reference = self.make_image(target=star_sc, window_size=[fov_size_ref, fov_size_ref], _model_psf=None,
+                                        pix_stars=pix_ref, mag_stars=mag_ref, num_pix=preview_img.shape[0])
 
             detected[detected == 0] = 0.0001
             detected[np.isnan(detected)] = 0.0001
@@ -4588,7 +4738,7 @@ class KPEDAstrometryPipeline(KPEDPipeline):
             ax.imshow(self.scale_image(detected, correction='local'), cmap=plt.cm.magma, origin='lower',
                       interpolation='nearest')
             # save figure
-            fname = '{:s}_fake_detected.png'.format(_obs)
+            fname = '{:s}_fake_detected.png'.format(self.db_entry['_id'])
             plt.savefig(os.path.join(_path_out, fname), dpi=300)
 
             # apply shift:
@@ -4604,7 +4754,7 @@ class KPEDAstrometryPipeline(KPEDPipeline):
             ax.imshow(self.scale_image(shifted, correction='local'), cmap=plt.cm.magma, origin='lower',
                       interpolation='nearest')
             # save figure
-            fname = '{:s}_fake_detected_offset.png'.format(_obs)
+            fname = '{:s}_fake_detected_offset.png'.format(self.db_entry['_id'])
             plt.savefig(os.path.join(_path_out, fname), dpi=300)
 
             plt.close('all')
@@ -4616,7 +4766,7 @@ class KPEDAstrometryPipeline(KPEDPipeline):
             ax.imshow(self.scale_image(reference, correction='local'), cmap=plt.cm.magma, origin='lower',
                       interpolation='nearest')
             # save figure
-            fname = '{:s}_fake_reference.png'.format(_obs)
+            fname = '{:s}_fake_reference.png'.format(self.db_entry['_id'])
             plt.savefig(os.path.join(_path_out, fname), dpi=300)
 
             ''' solve field '''
@@ -4649,7 +4799,7 @@ class KPEDAstrometryPipeline(KPEDPipeline):
             scaling = [1e-2, 1e-2, 1e-5, 1e-3, 1e-3, 1e-5]
             if self.config['pipeline']['astrometry']['verbose']:
                 print('solving with LSQ to get initial parameter estimates')
-            plsq = leastsq(residual, p0, args=(Y, X), ftol=1.49012e-13, xtol=1.49012e-13, full_output=True,
+            plsq = leastsq(self.residual, p0, args=(Y, X), ftol=1.49012e-13, xtol=1.49012e-13, full_output=True,
                            diag=scaling)
             # print(plsq)
             if self.config['pipeline']['astrometry']['verbose']:
@@ -4672,7 +4822,8 @@ class KPEDAstrometryPipeline(KPEDPipeline):
                 source_mags = source_mags[mask_outliers]
 
                 # plsq = leastsq(residual, p0, args=(Y, X), ftol=1.49012e-13, xtol=1.49012e-13, full_output=True)
-                plsq = leastsq(residual, plsq[0], args=(Y, X), ftol=1.49012e-13, xtol=1.49012e-13, full_output=True)
+                plsq = leastsq(self.residual, plsq[0], args=(Y, X),
+                               ftol=1.49012e-13, xtol=1.49012e-13, full_output=True)
                 if self.config['pipeline']['astrometry']['verbose']:
                     print(plsq[0])
                 # residuals = residual(plsq[0], Y, X)
@@ -4699,12 +4850,12 @@ class KPEDAstrometryPipeline(KPEDPipeline):
             # plsq_bootstrap, err_bootstrap = fit_bootstrap(residual, p0, Y, X, yerr_systematic=0.0, n_samp=100)
             n_samp = self.config['pipeline']['astrometry']['bootstrap']['n_samp']
             Nsigma = self.config['pipeline']['astrometry']['bootstrap']['Nsigma']
-            plsq_bootstrap, err_bootstrap = fit_bootstrap(residual, plsq[0], Y, X,
-                                                          yerr_systematic=0.0, n_samp=n_samp, Nsigma=Nsigma)
+            plsq_bootstrap, err_bootstrap = self.fit_bootstrap(self.residual, plsq[0], Y, X,
+                                                               yerr_systematic=0.0, n_samp=n_samp, Nsigma=Nsigma)
             if self.config['pipeline']['astrometry']['verbose']:
                 print(plsq_bootstrap)
                 print(err_bootstrap)
-            residuals = residual(plsq_bootstrap, Y, X)
+            residuals = self.residual(plsq_bootstrap, Y, X)
             if self.config['pipeline']['astrometry']['verbose']:
                 print('residuals:')
                 print(residuals)
@@ -4723,8 +4874,8 @@ class KPEDAstrometryPipeline(KPEDPipeline):
             # print('Q:', Q)
             # print('R:', R)
 
-            Y_C = compute_detector_position(plsq[0], X).T + preview_img.shape[0] / 2
-            Y_tan = compute_detector_position(plsq[0], np.array([list(plsq[0][0:2])])).T + preview_img.shape[0] / 2
+            Y_C = self.compute_detector_position(plsq[0], X).T + preview_img.shape[0] / 2
+            Y_tan = self.compute_detector_position(plsq[0], np.array([list(plsq[0][0:2])])).T + preview_img.shape[0] / 2
             # print(Y_C)
             if self.config['pipeline']['astrometry']['verbose']:
                 print('Tangent point pixel position: ', Y_tan)
@@ -4749,15 +4900,45 @@ class KPEDAstrometryPipeline(KPEDPipeline):
             # Gaia_DR2_source_id Gaia_DR2_source_G_mag Gaia_DR2_ra_dec ccd_pixel_positions
             matched_sources = np.hstack((np.expand_dims(source_ids, axis=1),
                                          np.expand_dims(source_mags, axis=1),
-                                         X, Y + (np.array(preview_img.shape) / 2.0)))
+                                         X, Y + (np.array(preview_img.shape) / 2.0),
+                                         np.expand_dims(residuals, axis=1)))
             if self.config['pipeline']['astrometry']['verbose']:
                 print('Matched sources with Gaia DR2:')
                 print(matched_sources)
 
+            ''' dump to text files '''
+            with open(os.path.join(_path_out, f'{self.db_entry["_id"]}.astrometric_solution.txt'), 'w') as f:
+                f.write('# LSQ-bootstrapped solution: RA_tan[deg] Dec_tan[deg] M^-1[deg/pix]\n')
+                f.write(str(plsq_bootstrap) + '\n')
+                f.write('# LSQ-bootstrapped solution errors: RA_tan[deg] Dec_tan[deg] M^-1[deg/pix]\n')
+                f.write(str(err_bootstrap) + '\n')
+                f.write('# Linear transformation matrix M[pix/deg]\n')
+                f.write(str(M) + '\n')
+                f.write('# Linear transformation matrix M^-1[deg/pix]\n')
+                f.write(str(M_m1) + '\n')
+                f.write('# Tangent point position on the EMCCD[pix]\n')
+                f.write(str(Y_tan) + '\n')
+                f.write('# Field rotation angle [deg]\n')
+                f.write(str(theta) + '\n')
+                f.write('# Pixel scale: mean[arcsec] x[arcsec] y[arcsec]\n')
+                f.write('{:.7f} {:.7f} {:.7f}\n'.format(s, abs(R[0, 0]) * 3600, abs(R[1, 1]) * 3600))
+                f.write('# Image size: mean[arcsec] x[arcsec] y[arcsec]\n')
+                f.write('{:.7f} {:.7f} {:.7f}\n'.format(size,
+                                                        abs(R[0, 0]) * 3600 * preview_img.shape[0],
+                                                        abs(R[1, 1]) * 3600 * preview_img.shape[1]))
+
+            with open(os.path.join(_path_out, f'{self.db_entry["_id"]}.matches.txt'), 'w') as f:
+                f.write('# Matches with Gaia DR2 catalog\n')
+                f.write('# source_id G_mag RA[deg] Dec[deg] emccd_x[pix] emccd_y[pix] postfit_residual[pix]\n')
+                for match in matched_sources:
+                    f.write(f'{int(match[0])} {match[1]:.6f} {match[2]:.13f} {match[3]:.13f}  ' +
+                            f'{match[4]:.3f} {match[5]:.3f} {match[6]:.3f}\n')
+
             ''' test the solution '''
             fov_center = SkyCoord(ra=plsq[0][0], dec=plsq[0][1], unit=(u.deg, u.deg), frame='icrs')
-            detected_solution = make_image(target=fov_center, window_size=[fov_size_det, fov_size_det], _model_psf=None,
-                                           pix_stars=pix_det, mag_stars=mag_det, num_pix=preview_img.shape[0])
+            detected_solution = self.make_image(target=fov_center, window_size=[fov_size_det, fov_size_det],
+                                                _model_psf=None, pix_stars=pix_det, mag_stars=mag_det,
+                                                num_pix=preview_img.shape[0])
             detected_solution[detected_solution == 0] = 0.0001
             detected_solution[np.isnan(detected_solution)] = 0.0001
             detected_solution = np.log(detected_solution)
@@ -4833,14 +5014,27 @@ class KPEDAstrometryPipeline(KPEDPipeline):
 
             # set last_modified as summed.fits modified date:
             time_tag = datetime.datetime.utcfromtimestamp(os.stat(os.path.join(_path_out,
-                               '{:s}_summed.fits'.format(self.db_entry['_id']))).st_mtime)
+                               '{:s}.astrometric_solution.txt'.format(self.db_entry['_id']))).st_mtime)
             self.db_entry['pipelined'][self.name]['last_modified'] = time_tag
 
             self.db_entry['pipelined'][self.name]['location'] = _path_out
 
-            # TODO:
-            self.db_entry['pipelined'][self.name]['astrometric_solution'] = None
-            self.db_entry['pipelined'][self.name]['matches'] = None
+            self.db_entry['pipelined'][self.name]['bootstrapped_solution'] = plsq_bootstrap
+            self.db_entry['pipelined'][self.name]['bootstrapped_solution_error'] = err_bootstrap
+            self.db_entry['pipelined'][self.name]['matched_sources'] = matched_sources
+            self.db_entry['pipelined'][self.name]['astrometric_solution']['M'] = M
+            self.db_entry['pipelined'][self.name]['astrometric_solution']['M_m1'] = M_m1
+            self.db_entry['pipelined'][self.name]['astrometric_solution']['tangent_point_sky'] = plsq_bootstrap[:2]
+            self.db_entry['pipelined'][self.name]['astrometric_solution']['tangent_point_pix'] = Y_tan
+            self.db_entry['pipelined'][self.name]['astrometric_solution']['rotatioin_angle'] = theta
+            self.db_entry['pipelined'][self.name]['astrometric_solution']['pixel_scale']['mean'] = s
+            self.db_entry['pipelined'][self.name]['astrometric_solution']['pixel_scale']['x'] = abs(R[0, 0]) * 3600
+            self.db_entry['pipelined'][self.name]['astrometric_solution']['pixel_scale']['y'] = abs(R[1, 1]) * 3600
+            self.db_entry['pipelined'][self.name]['astrometric_solution']['image_size']['mean'] = size
+            self.db_entry['pipelined'][self.name]['astrometric_solution']['image_size']['x'] = \
+                abs(R[0, 0]) * 3600 * preview_img.shape[0]
+            self.db_entry['pipelined'][self.name]['astrometric_solution']['image_size']['y'] = \
+                abs(R[1, 1]) * 3600 * preview_img.shape[1]
 
         elif part == 'astrometry_pipeline:preview':
             raise NotImplementedError()

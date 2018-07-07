@@ -1050,13 +1050,42 @@ def astrometry(_obs, _config):
                                                        abs(R[1, 1]) * 3600 * preview_img.shape[1]))
 
     ''' matches: '''
-    # Gaia_DR2_source_id Gaia_DR2_source_G_mag Gaia_DR2_ra_dec ccd_pixel_positions
+    # Gaia_DR2_source_id Gaia_DR2_source_G_mag Gaia_DR2_ra_dec ccd_pixel_positions postfit_residual_pix
     matched_sources = np.hstack((np.expand_dims(source_ids, axis=1),
                                  np.expand_dims(source_mags, axis=1),
-                                 X, Y + (np.array(preview_img.shape) / 2.0)))
+                                 X, Y + (np.array(preview_img.shape) / 2.0),
+                                 np.expand_dims(residuals, axis=1)))
     if _config['pipeline']['astrometry']['verbose']:
         print('Matched sources with Gaia DR2:')
         print(matched_sources)
+
+    ''' dump to text files '''
+    with open(os.path.join(_path_out, f'{_obs}.astrometric_solution.txt'), 'w') as f:
+        f.write('# LSQ-bootstrapped solution: RA_tan[deg] Dec_tan[deg] M^-1[deg/pix]\n')
+        f.write(str(plsq_bootstrap) + '\n')
+        f.write('# LSQ-bootstrapped solution errors: RA_tan[deg] Dec_tan[deg] M^-1[deg/pix]\n')
+        f.write(str(err_bootstrap) + '\n')
+        f.write('# Linear transformation matrix M[pix/deg]\n')
+        f.write(str(M) + '\n')
+        f.write('# Linear transformation matrix M^-1[deg/pix]\n')
+        f.write(str(M_m1) + '\n')
+        f.write('# Tangent point position on the EMCCD[pix]\n')
+        f.write(str(Y_tan) + '\n')
+        f.write('# Field rotation angle [deg]\n')
+        f.write(str(theta) + '\n')
+        f.write('# Pixel scale: mean[arcsec] x[arcsec] y[arcsec]\n')
+        f.write('{:.7f} {:.7f} {:.7f}\n'.format(s, abs(R[0, 0]) * 3600, abs(R[1, 1]) * 3600))
+        f.write('# Image size: mean[arcsec] x[arcsec] y[arcsec]\n')
+        f.write('{:.7f} {:.7f} {:.7f}\n'.format(size,
+                                                abs(R[0, 0]) * 3600 * preview_img.shape[0],
+                                                abs(R[1, 1]) * 3600 * preview_img.shape[1]))
+
+    with open(os.path.join(_path_out, f'{_obs}.matches.txt'), 'w') as f:
+        f.write('# Matches with Gaia DR2 catalog\n')
+        f.write('# source_id G_mag RA[deg] Dec[deg] emccd_x[pix] emccd_y[pix] postfit_residual[pix]\n')
+        for match in matched_sources:
+            f.write(f'{int(match[0])} {match[1]:.6f} {match[2]:.13f} {match[3]:.13f}  ' +
+                    f'{match[4]:.3f} {match[5]:.3f} {match[6]:.3f}\n')
 
     ''' test the solution '''
     fov_center = SkyCoord(ra=plsq[0][0], dec=plsq[0][1], unit=(u.deg, u.deg), frame='icrs')
