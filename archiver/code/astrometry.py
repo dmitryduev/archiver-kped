@@ -1145,7 +1145,7 @@ def astrometry(_obs, _config):
         # w.wcs.ctype = ["RA---TAN-SIP", "DEC--TAN-SIP"]
         w.wcs.ctype = ["RA---TAN", "DEC--TAN"]
         # linear mapping detector :-> focal plane [deg/pix]
-        w.wcs.cd = np.array([[M_11, M_12],
+        w.wcs.cd = np.array([[-M_11, -M_12],
                              [M_21, M_22]])
 
         # turn WCS object into header
@@ -1154,7 +1154,9 @@ def astrometry(_obs, _config):
         # for key in header.keys():
         #     new_header[key] = header[key]
 
-        export_fits(os.path.join(_path_registered, f'{_obs}_registered_sum.wcs.fits'), preview_img, _header=new_header)
+        with fits.open(os.path.join(_path_registered, _fits_in)) as fi:
+            data_wcs = fi[0].data
+        export_fits(os.path.join(_path_registered, f'{_obs}_registered_sum.wcs.fits'), data_wcs, _header=new_header)
 
 
 if __name__ == '__main__':

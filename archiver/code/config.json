@@ -160,7 +160,7 @@
                    "WEIGHT_TYPE": "MAP_WEIGHT", "WEIGHT_GAIN": "Y"},
         "sexpath": "sextractor"
       },
-      "vignetting_cutoff": 0.98,
+      "vignetting_cutoff": 0.985,
       "fov_center": "starlist",
       "reference_win_size": 400.0,
       "max_pix_distance_for_match": 10,
