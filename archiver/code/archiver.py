@@ -5020,7 +5020,15 @@ class KPEDAstrometryPipeline(KPEDPipeline):
                                      [M_21, M_22]])
 
                 # turn WCS object into header
-                new_header = w.to_header(relax=True)
+                new_header = w.to_header(relax=False)
+                new_header.rename_keyword('PC1_1', 'CD1_1')
+                new_header.rename_keyword('PC1_2', 'CD1_2')
+                new_header.rename_keyword('PC2_1', 'CD2_1')
+                new_header.rename_keyword('PC2_2', 'CD2_2')
+                new_header.set('CD1_1', new_header['CD1_1'], 'Linear projection matrix')
+                new_header.set('CD1_2', new_header['CD1_2'], 'Linear projection matrix')
+                new_header.set('CD2_1', new_header['CD2_1'], 'Linear projection matrix')
+                new_header.set('CD2_2', new_header['CD2_2'], 'Linear projection matrix')
                 # merge with old header:
                 # for key in header.keys():
                 #     new_header[key] = header[key]

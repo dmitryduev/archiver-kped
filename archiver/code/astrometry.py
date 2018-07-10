@@ -1147,9 +1147,22 @@ def astrometry(_obs, _config):
         # linear mapping detector :-> focal plane [deg/pix]
         w.wcs.cd = np.array([[-M_11, -M_12],
                              [M_21, M_22]])
+        # w.wcs.cd = [[-M_11, -M_12],
+        #             [M_21, M_22]]
+
+        # print(w.wcs)
 
         # turn WCS object into header
-        new_header = w.to_header(relax=True)
+        new_header = w.to_header(relax=False)
+        new_header.rename_keyword('PC1_1', 'CD1_1')
+        new_header.rename_keyword('PC1_2', 'CD1_2')
+        new_header.rename_keyword('PC2_1', 'CD2_1')
+        new_header.rename_keyword('PC2_2', 'CD2_2')
+        new_header.set('CD1_1', new_header['CD1_1'], 'Linear projection matrix')
+        new_header.set('CD1_2', new_header['CD1_2'], 'Linear projection matrix')
+        new_header.set('CD2_1', new_header['CD2_1'], 'Linear projection matrix')
+        new_header.set('CD2_2', new_header['CD2_2'], 'Linear projection matrix')
+        # print(new_header)
         # merge with old header:
         # for key in header.keys():
         #     new_header[key] = header[key]
