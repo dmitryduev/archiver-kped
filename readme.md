@@ -21,6 +21,8 @@ docker run -d --restart always --name archiver-kped-mongo -p 27018:27017 -v arch
        mongo:latest
 ```
 
+Feel free to change u/p for the mongo admin. If you choose to do so, change the corresponding fields in the archiver config file `archiver/code/config.json`: `"database" -> "admin"` and `"admin_pwd"`. Also feel free to change the the default mongo u/p specified in the archiver config file.
+
 Create file archiver/secrets.json with the Kowalski login credentials:
 ```json
 {
