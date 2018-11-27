@@ -1234,7 +1234,7 @@ class KPEDArchiver(Archiver):
     # @timeout(seconds_before_timeout=120)
     def connect_to_db(self):
         """
-            Connect to Robo-AO's MongoDB-powered database
+            Connect to MongoDB-powered database
         :return:
         """
         _config = self.config
@@ -1337,7 +1337,7 @@ class KPEDArchiver(Archiver):
     # @timeout(seconds_before_timeout=120)
     def disconnect_from_db(self):
         """
-            Disconnect from Robo-AO's MongoDB database.
+            Disconnect from MongoDB database.
         :return:
         """
         self.logger.debug('Disconnecting from the database.')
@@ -4527,14 +4527,14 @@ class KPEDAstrometryPipeline(KPEDPipeline):
                          "object_coordinates": {"radec": f"[({_star_sc.ra.deg}, {_star_sc.dec.deg})]",
                                                 "cone_search_radius": str(_fov_size_ref_arcsec / 2),
                                                 "cone_search_unit": "arcsec"},
-                         "catalogs": {"Gaia_DR2": {"filter": {},
-                                                   "projection": {"_id": 0, "source_id": 1,
-                                                                  "ra": 1, "dec": 1, "ra_error": 1, "dec_error": 1,
-                                                                  "phot_g_mean_mag": 1}}}
+                         "catalogs": {
+                             "Gaia_DR2": {
+                                 "filter": "{}",
+                                 "projection": '{"_id": 0, "source_id": 1, "ra": 1, "dec": 1, "ra_error": 1, "dec_error": 1, "phot_g_mean_mag": 1}'}}
                          }
                     r = kowalski.query(query=q, timeout=10)
-                    key = list(r['result']['Gaia_DR2'].keys())[0]
-                    fov_stars = r['result']['Gaia_DR2'][key]
+                    key = list(r['result_data']['Gaia_DR2'].keys())[0]
+                    fov_stars = r['result_data']['Gaia_DR2'][key]
 
                     return fov_stars
             except Exception as _e:
